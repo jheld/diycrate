@@ -13,3 +13,5 @@ simplegeneric==0.8.1
 six==1.10.0
 traitlets==4.1.0
 wheel==0.29.0
+bottle=0.12.9
+pyinotify=0.9.6
