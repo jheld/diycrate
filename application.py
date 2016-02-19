@@ -12,6 +12,9 @@ cloud_provider_name = 'Box'
 
 csrf_token = ''
 
+process = pyinotify.ProcessEvent()
+
+
 def store_tokens_callback(access_token, refresh_token):
     pass
 
@@ -20,6 +23,7 @@ def store_tokens_callback(access_token, refresh_token):
 def oauth_handler():
     assert csrf_token == bottle.request.GET['state']
     return 'OK'
+
 
 if __name__ == '__main__':
     conf_obj = configparser.ConfigParser()
@@ -33,7 +37,8 @@ if __name__ == '__main__':
     if not conf_obj.has_section('oauth2'):
         arg_parser = argparse.ArgumentParser()
         arg_parser.add_argument('client_id', type=str, help='Client ID provided by {}'.format(cloud_provider_name))
-        arg_parser.add_argument('client_secret', type=str, help='Client Secret provided by {}'.format(cloud_provider_name))
+        arg_parser.add_argument('client_secret', type=str,
+                                help='Client Secret provided by {}'.format(cloud_provider_name))
         args = arg_parser.parse_args()
         conf_obj.add_section('oauth2')
         conf_obj['oauth2'] = {
