@@ -40,7 +40,8 @@ class EventHandler(pyinotify.ProcessEvent):
         self.operations = []
         self.wait_time = 5
         self.operations_thread = threading.Thread(target=self.operation_coalesce)
-        self.operations_thread.daemon = True  # TODO: start the thread when the logic is wired up
+        self.operations_thread.daemon = True
+        self.operations_thread.start()
 
     def operation_coalesce(self):
         """
@@ -48,127 +49,142 @@ class EventHandler(pyinotify.ProcessEvent):
         :return:
         """
         while True:
-            for _ in range(self.wait_time):
-                for operation in self.operations:
-                    self.process_event(*operation)
-                time.sleep(1)
+            time.sleep(self.wait_time)
+            operations_to_perform = self.operations[:]  # keep a local copy for this loop-run
+            for operation in operations_to_perform:
+                self.process_event(*operation)
 
-    def process_event(self, event, operation):
+    @staticmethod
+    def process_event(event, operation):
         """
-        Process the given event & operation.
+        Wrapper to process the given event on the operation.
         :param event:
         :param operation:
         :return:
         """
-        pass
+        operation(event, do_event=True)
 
-    def process_IN_CREATE(self, event):
+    def process_IN_CREATE(self, event, do_event=False):
         """
         Overrides the super.
+        :param do_event:
         :param event:
         :return:
         """
-        print("Creating:", event.pathname)
-        folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR, '')) if
-                               folder and folder != '/']
-        print(folders_to_traverse)
-        client = Client(oauth)
-        box_folder = client.folder(folder_id='0').get()
-        cur_box_folder = box_folder
-        # if we're modifying in root box dir, then we've already found the folder
-        is_base = (event.path == BOX_DIR or event.path[:-1] == BOX_DIR)
-        for folder in folders_to_traverse:
-            did_find_folder = False
+        if do_event:
+            print("Creating:", event.pathname)
+            folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR, '')) if
+                                   folder and folder != '/']
+            print(folders_to_traverse)
+            client = Client(oauth)
+            box_folder = client.folder(folder_id='0').get()
+            cur_box_folder = box_folder
+            # if we're modifying in root box dir, then we've already found the folder
+            is_base = (event.path == BOX_DIR or event.path[:-1] == BOX_DIR)
+            for folder in folders_to_traverse:
+                did_find_folder = False
+                for entry in cur_box_folder['item_collection']['entries']:
+                    if folder == entry['name'] and entry['type'] == 'folder':
+                        did_find_folder = True
+                        cur_box_folder = client.folder(folder_id=entry['id']).get()
+                if not did_find_folder:
+                    try:
+                        cur_box_folder = cur_box_folder.create_subfolder(folder).get()
+                        print('Subfolder creation: ', event.pathname)
+                    except boxsdk.exception.BoxAPIException as e:
+                        print(e)
+            if not is_base:
+                assert cur_box_folder['name'] == os.path.split(event.path)[-1]
             for entry in cur_box_folder['item_collection']['entries']:
-                if folder == entry['name'] and entry['type'] == 'folder':
-                    did_find_folder = True
-                    cur_box_folder = client.folder(folder_id=entry['id']).get()
-            if not did_find_folder:
-                try:
-                    cur_box_folder = cur_box_folder.create_subfolder(folder).get()
-                    print('Subfolder creation: ', event.pathname)
-                except boxsdk.exception.BoxAPIException as e:
-                    print(e)
-        if not is_base:
-            assert cur_box_folder['name'] == os.path.split(event.path)[-1]
-        for entry in cur_box_folder['item_collection']['entries']:
-            if os.path.isfile(event.pathname):
-                if entry['type'] == 'file' and entry['name'] == event.name:
-                    if entry['id'] not in self.files_from_box:
-                        print('Upload new file: ', event.pathname)
-                        cur_box_folder.upload(event.pathname, event.name)
-                    else:
-                        self.files_from_box.remove(entry['id'])  # just downloaded it
-                    break
-            else:
-                if entry['type'] == 'folder' and entry['name'] == os.path.split(event.pathname)[-1]:
-                    if entry['id'] not in self.folders_from_box:
-                        print('Upload new folder: ', event.pathname)
-                        cur_box_folder.create_subfolder(os.path.split(event.pathname)[-1])
-                    else:
-                        self.folders_from_box.remove(entry['id'])  # just downloaded it
-                    break
+                if os.path.isfile(event.pathname):
+                    if entry['type'] == 'file' and entry['name'] == event.name:
+                        if entry['id'] not in self.files_from_box:
+                            print('Upload new file: ', event.pathname)
+                            cur_box_folder.upload(event.pathname, event.name)
+                        else:
+                            self.files_from_box.remove(entry['id'])  # just downloaded it
+                        break
+                else:
+                    if entry['type'] == 'folder' and entry['name'] == os.path.split(event.pathname)[-1]:
+                        if entry['id'] not in self.folders_from_box:
+                            print('Upload new folder: ', event.pathname)
+                            cur_box_folder.create_subfolder(os.path.split(event.pathname)[-1])
+                        else:
+                            self.folders_from_box.remove(entry['id'])  # just downloaded it
+                        break
+        else:
+            self.operations.append([event, self.process_IN_CREATE])
 
-    def process_IN_DELETE(self, event):
+    def process_IN_DELETE(self, event, do_event=False):
         """
         Overrides the super.
+        :param do_event:
         :param event:
         :return:
         """
-        print("Removing:", event.pathname)
+        if do_event:
+            print("Removing:", event.pathname)
+        else:
+            self.operations.append([event, self.process_IN_DELETE])
 
-    def process_IN_CLOSE_WRITE(self, event):
+    def process_IN_CLOSE_WRITE(self, event, do_event=False):
         """
         Overrides the super.
+        :param do_event:
         :param event:
         :return:
         """
-        print("Closing...:", event.pathname)
-        folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR + '/', '')) if folder]
-        print(folders_to_traverse)
-        client = Client(oauth)
-        box_folder = client.folder(folder_id='0').get()
-        cur_box_folder = box_folder
-        # if we're modifying in root box dir, then we've already found the folder
-        is_base = (event.path == BOX_DIR or event.path[:-1] == BOX_DIR)
-        for folder in folders_to_traverse:
+        if do_event:
+            print("Closing...:", event.pathname)
+            folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR + '/', '')) if folder]
+            print(folders_to_traverse)
+            client = Client(oauth)
+            box_folder = client.folder(folder_id='0').get()
+            cur_box_folder = box_folder
+            # if we're modifying in root box dir, then we've already found the folder
+            is_base = (event.path == BOX_DIR or event.path[:-1] == BOX_DIR)
+            for folder in folders_to_traverse:
+                for entry in cur_box_folder['item_collection']['entries']:
+                    if folder == entry['name'] and entry['type'] == 'folder':
+                        cur_box_folder = client.folder(folder_id=entry['id']).get()
+            if not is_base:
+                assert cur_box_folder['name'] == os.path.split(event.path)[-1]
             for entry in cur_box_folder['item_collection']['entries']:
-                if folder == entry['name'] and entry['type'] == 'folder':
-                    cur_box_folder = client.folder(folder_id=entry['id']).get()
-        if not is_base:
-            assert cur_box_folder['name'] == os.path.split(event.path)[-1]
-        for entry in cur_box_folder['item_collection']['entries']:
-            if os.path.isfile(event.pathname):
-                if entry['type'] == 'file' and entry['name'] == event.name:
-                    if entry['id'] not in self.files_from_box:
-                        cur_file = client.file(file_id=entry['id']).get()
-                        if cur_file.update_contents(event.pathname):
-                            print('Updating contents...', event.pathname)
-                    else:
-                        self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
-                    break
-            else:
-                print('Whoa, we got here? Yikes.')
-                if entry['type'] == 'folder' and entry['name'] == os.path.split(event.pathname)[-1]:
-                    if entry['id'] not in self.folders_from_box:
-                        cur_folder = client.folder(folder_id=entry['id']).get()
-                        cur_folder.update_contents(event.pathname)
-                    else:
-                        self.folders_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
-                    break
+                if os.path.isfile(event.pathname):
+                    if entry['type'] == 'file' and entry['name'] == event.name:
+                        if entry['id'] not in self.files_from_box:
+                            cur_file = client.file(file_id=entry['id']).get()
+                            if cur_file.update_contents(event.pathname):
+                                print('Updating contents...', event.pathname)
+                        else:
+                            self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
+                        break
+                else:
+                    print('Whoa, we got here? Yikes.')
+                    if entry['type'] == 'folder' and entry['name'] == os.path.split(event.pathname)[-1]:
+                        if entry['id'] not in self.folders_from_box:
+                            cur_folder = client.folder(folder_id=entry['id']).get()
+                            cur_folder.update_contents(event.pathname)
+                        else:
+                            self.folders_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
+                        break
+        else:
+            self.operations.append([event, self.process_IN_CLOSE_WRITE])
 
-    def process_IN_MOVED_FROM(self, event):
+    def process_IN_MOVED_FROM(self, event, do_event=False):
         """
         Overrides the super.
+        :param do_event:
         :param event:
         :return:
         """
         print("Moved from:", event.pathname)
         self.move_events.append(event)
 
-    def process_IN_MOVED_TO(self, event):
+    def process_IN_MOVED_TO(self, event, do_event=False):
         """
         Overrides the super.
+        :param do_event:
         :param event:
         :return:
         """
