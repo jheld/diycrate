@@ -25,7 +25,14 @@ BOX_DIR = os.path.expanduser('~/box')
 
 
 class EventHandler(pyinotify.ProcessEvent):
+    """
+    EventHandler to manage cloud storage synchronization.
+    """
     def __init__(self):
+        """
+        Extends the super to add cloud storage state.
+        :return:
+        """
         super(EventHandler, self).__init__()
         self.move_events = []
         self.files_from_box = []
