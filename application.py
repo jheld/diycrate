@@ -7,6 +7,7 @@ import webbrowser
 import bottle
 import pyinotify
 import redis
+import time
 import boxsdk
 from boxsdk import OAuth2, Client
 
@@ -29,10 +30,25 @@ class EventHandler(pyinotify.ProcessEvent):
         self.move_events = []
         self.files_from_box = []
         self.folders_from_box = []
+        self.operations = []
+        self.wait_time = 5
+        self.operations_thread = threading.Thread(target=self.operation_coalesce)
+        self.operations_thread.daemon = True  # TODO: start the thread when the logic is wired up
+
+    def operation_coalesce(self):
+        while True:
+            for _ in range(self.wait_time):
+                for operation in self.operations:
+                    self.process_event(*operation)
+                time.sleep(1)
+
+    def process_event(self, event, operation):
+        pass
 
     def process_IN_CREATE(self, event):
         print("Creating:", event.pathname)
-        folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR, '')) if folder and folder != '/']
+        folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR, '')) if
+                               folder and folder != '/']
         print(folders_to_traverse)
         client = Client(oauth)
         box_folder = client.folder(folder_id='0').get()
@@ -70,12 +86,13 @@ class EventHandler(pyinotify.ProcessEvent):
                     else:
                         self.folders_from_box.remove(entry['id'])  # just downloaded it
                     break
+
     def process_IN_DELETE(self, event):
         print("Removing:", event.pathname)
 
     def process_IN_CLOSE_WRITE(self, event):
         print("Closing...:", event.pathname)
-        folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR+'/', '')) if folder]
+        folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR + '/', '')) if folder]
         print(folders_to_traverse)
         client = Client(oauth)
         box_folder = client.folder(folder_id='0').get()
@@ -147,6 +164,7 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
             handler.files_from_box.append(entry['id'])
             open(os.path.join(path, entry['name']), 'wb').write(client.file(file_id=entry['id']).get().content())
 
+
 @bottle.route('/')
 def oauth_handler():
     assert csrf_token == bottle.request.GET['state']
@@ -206,4 +224,3 @@ if __name__ == '__main__':
     notifier_thread.daemon = True
     notifier_thread.start()
     bottle.run()
-
