@@ -36,6 +36,10 @@ class EventHandler(pyinotify.ProcessEvent):
         self.operations_thread.daemon = True  # TODO: start the thread when the logic is wired up
 
     def operation_coalesce(self):
+        """
+        Coalesce and process the operations in a more timely-fashion.
+        :return:
+        """
         while True:
             for _ in range(self.wait_time):
                 for operation in self.operations:
@@ -43,9 +47,20 @@ class EventHandler(pyinotify.ProcessEvent):
                 time.sleep(1)
 
     def process_event(self, event, operation):
+        """
+        Process the given event & operation.
+        :param event:
+        :param operation:
+        :return:
+        """
         pass
 
     def process_IN_CREATE(self, event):
+        """
+        Overrides the super.
+        :param event:
+        :return:
+        """
         print("Creating:", event.pathname)
         folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR, '')) if
                                folder and folder != '/']
@@ -88,9 +103,19 @@ class EventHandler(pyinotify.ProcessEvent):
                     break
 
     def process_IN_DELETE(self, event):
+        """
+        Overrides the super.
+        :param event:
+        :return:
+        """
         print("Removing:", event.pathname)
 
     def process_IN_CLOSE_WRITE(self, event):
+        """
+        Overrides the super.
+        :param event:
+        :return:
+        """
         print("Closing...:", event.pathname)
         folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR + '/', '')) if folder]
         print(folders_to_traverse)
@@ -126,10 +151,20 @@ class EventHandler(pyinotify.ProcessEvent):
                     break
 
     def process_IN_MOVED_FROM(self, event):
+        """
+        Overrides the super.
+        :param event:
+        :return:
+        """
         print("Moved from:", event.pathname)
         self.move_events.append(event)
 
     def process_IN_MOVED_TO(self, event):
+        """
+        Overrides the super.
+        :param event:
+        :return:
+        """
         print("Moved to:", event.pathname)
 
 
@@ -139,6 +174,12 @@ notifier = pyinotify.Notifier(wm, handler)
 
 
 def store_tokens_callback(access_token, refresh_token):
+    """
+    Intention is to store the oauth tokens
+    :param access_token:
+    :param refresh_token:
+    :return:
+    """
     pass
 
 
@@ -150,6 +191,13 @@ def store_tokens_callback(access_token, refresh_token):
 #             walk_and_notify_tree(os.path.join(path, a_dir))
 
 def walk_and_notify_and_download_tree(path, box_folder, client):
+    """
+    Walk the path recursively and add watcher and create the path.
+    :param path:
+    :param box_folder:
+    :param client:
+    :return:
+    """
     if os.path.isdir(path):
         wm.add_watch(path, mask, rec=True)
     for entry in client.folder(folder_id=box_folder['id']).get()['item_collection']['entries']:
@@ -167,6 +215,10 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
 
 @bottle.route('/')
 def oauth_handler():
+    """
+    RESTful end-point for the oauth handling
+    :return:
+    """
     assert csrf_token == bottle.request.GET['state']
     access_token, refresh_token = oauth.authenticate(bottle.request.GET['code'])
     client = Client(oauth)
