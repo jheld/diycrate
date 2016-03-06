@@ -15,10 +15,12 @@ cloud_provider_name = 'Box'
 
 csrf_token = ''
 
+bottle_app = bottle.Bottle()
+
 # The watch manager stores the watches and provides operations on watches
 wm = pyinotify.WatchManager()
 
-mask = pyinotify.IN_DELETE | pyinotify.IN_CREATE | pyinotify.IN_CLOSE_WRITE | \
+mask = pyinotify.IN_DELETE | pyinotify.IN_MODIFY | pyinotify.IN_CLOSE_WRITE | \
        pyinotify.IN_MOVED_TO | pyinotify.IN_MOVED_FROM  # watched events
 
 BOX_DIR = os.path.expanduser('~/box')
@@ -28,17 +30,18 @@ class EventHandler(pyinotify.ProcessEvent):
     """
     EventHandler to manage cloud storage synchronization.
     """
-    def __init__(self):
+
+    def my_init(self, **kargs):
         """
         Extends the super to add cloud storage state.
         :return:
         """
-        super(EventHandler, self).__init__()
+        super(EventHandler, self).my_init()
         self.move_events = []
         self.files_from_box = []
         self.folders_from_box = []
         self.operations = []
-        self.wait_time = 5
+        self.wait_time = 1
         self.operations_thread = threading.Thread(target=self.operation_coalesce)
         self.operations_thread.daemon = True
         self.operations_thread.start()
@@ -50,28 +53,23 @@ class EventHandler(pyinotify.ProcessEvent):
         """
         while True:
             time.sleep(self.wait_time)
-            operations_to_perform = self.operations[:]  # keep a local copy for this loop-run
+            cur_num_operations = len(self.operations)
+            operations_to_perform = self.operations[:cur_num_operations]  # keep a local copy for this loop-run
+            # operations list could have changed since the previous two instructions
+            self.operations = self.operations[cur_num_operations:] if len(self.operations) > cur_num_operations else []
             for operation in operations_to_perform:
                 self.process_event(*operation)
 
-    @staticmethod
-    def process_event(event, operation):
+    def process_event(self, event, operation):
         """
         Wrapper to process the given event on the operation.
         :param event:
         :param operation:
         :return:
         """
-        operation(event, do_event=True)
-
-    def process_IN_CREATE(self, event, do_event=False):
-        """
-        Overrides the super.
-        :param do_event:
-        :param event:
-        :return:
-        """
-        if do_event:
+        if operation == 'delete':
+            pass
+        elif operation == 'create':
             print("Creating:", event.pathname)
             folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR, '')) if
                                    folder and folder != '/']
@@ -100,43 +98,28 @@ class EventHandler(pyinotify.ProcessEvent):
                     if entry['type'] == 'file' and entry['name'] == event.name:
                         if entry['id'] not in self.files_from_box:
                             print('Upload new file: ', event.pathname)
-                            cur_box_folder.upload(event.pathname, event.name)
+                            a_file = client.file(file_id=entry['id']).get()
+                            # seem it is possible to get more than one create (without having a delete in between)
+                            a_file.update_contents(event.pathname)
+                            # cur_box_folder.upload(event.pathname, event.name)
                         else:
                             self.files_from_box.remove(entry['id'])  # just downloaded it
                         break
-                else:
-                    if entry['type'] == 'folder' and entry['name'] == os.path.split(event.pathname)[-1]:
-                        if entry['id'] not in self.folders_from_box:
-                            print('Upload new folder: ', event.pathname)
-                            cur_box_folder.create_subfolder(os.path.split(event.pathname)[-1])
-                        else:
-                            self.folders_from_box.remove(entry['id'])  # just downloaded it
-                        break
-        else:
-            self.operations.append([event, self.process_IN_CREATE])
-
-    def process_IN_DELETE(self, event, do_event=False):
-        """
-        Overrides the super.
-        :param do_event:
-        :param event:
-        :return:
-        """
-        if do_event:
-            print("Removing:", event.pathname)
-        else:
-            self.operations.append([event, self.process_IN_DELETE])
-
-    def process_IN_CLOSE_WRITE(self, event, do_event=False):
-        """
-        Overrides the super.
-        :param do_event:
-        :param event:
-        :return:
-        """
-        if do_event:
+                # else:  # cannot create a sub-folder that already exists
+                #     if entry['type'] == 'folder' and entry['name'] == os.path.split(event.pathname)[-1]:
+                #         if entry['id'] not in self.folders_from_box:
+                #             print('Upload new folder: ', event.pathname)
+                #             try:
+                #                 cur_box_folder.create_subfolder(os.path.split(event.pathname)[-1])
+                #             except boxsdk.exception.BoxAPIException as e:
+                #                 print(e)
+                #         else:
+                #             self.folders_from_box.remove(entry['id'])  # just downloaded it
+                #         break
+        elif operation == 'close':
             print("Closing...:", event.pathname)
-            folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR + '/', '')) if folder]
+            folders_to_traverse = [folder for folder in os.path.split(event.path.replace(BOX_DIR, '')) if
+                                   folder and folder != '/']
             print(folders_to_traverse)
             client = Client(oauth)
             box_folder = client.folder(folder_id='0').get()
@@ -168,8 +151,43 @@ class EventHandler(pyinotify.ProcessEvent):
                         else:
                             self.folders_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
                         break
+        # operation(event, do_event=True)
+
+    def process_IN_CREATE(self, event, do_event=False):
+        """
+        Overrides the super.
+        :param do_event:
+        :param event:
+        :return:
+        """
+        if do_event:
+            pass
         else:
-            self.operations.append([event, self.process_IN_CLOSE_WRITE])
+            self.operations.append([event, 'create'])
+
+    def process_IN_DELETE(self, event, do_event=False):
+        """
+        Overrides the super.
+        :param do_event:
+        :param event:
+        :return:
+        """
+        if do_event:
+            print("Removing:", event.pathname)
+        else:
+            self.operations.append([event, 'delete'])
+
+    def process_IN_MODIFY(self, event, do_event=False):
+        """
+        Overrides the super.
+        :param do_event:
+        :param event:
+        :return:
+        """
+        if do_event:
+            pass
+        else:
+            self.operations.append([event, 'close'])
 
     def process_IN_MOVED_FROM(self, event, do_event=False):
         """
@@ -193,7 +211,8 @@ class EventHandler(pyinotify.ProcessEvent):
 
 handler = EventHandler()
 
-notifier = pyinotify.Notifier(wm, handler)
+notifier = pyinotify.ThreadedNotifier(wm, handler, read_freq=10)
+notifier.coalesce_events()
 
 
 def store_tokens_callback(access_token, refresh_token):
@@ -222,7 +241,7 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
     :return:
     """
     if os.path.isdir(path):
-        wm.add_watch(path, mask, rec=True)
+        wm.add_watch(path, mask, rec=False)
     for entry in client.folder(folder_id=box_folder['id']).get()['item_collection']['entries']:
         if entry['type'] == 'folder':
             handler.folders_from_box.append(entry['id'])
@@ -236,7 +255,7 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
             open(os.path.join(path, entry['name']), 'wb').write(client.file(file_id=entry['id']).get().content())
 
 
-@bottle.route('/')
+@bottle_app.route('/')
 def oauth_handler():
     """
     RESTful end-point for the oauth handling
@@ -245,7 +264,7 @@ def oauth_handler():
     assert csrf_token == bottle.request.GET['state']
     access_token, refresh_token = oauth.authenticate(bottle.request.GET['code'])
     client = Client(oauth)
-    wm.add_watch(BOX_DIR, mask, rec=True)
+    wm.add_watch(BOX_DIR, mask, rec=False)
     box_folder = client.folder(folder_id='0').get()
     walk_and_notify_and_download_tree(BOX_DIR, box_folder, client)
 
@@ -273,7 +292,7 @@ if __name__ == '__main__':
         conf_obj.add_section('oauth2')
     conf_obj['oauth2'] = {
         'client_id': args.client_id or conf_obj['oauth2']['client_id'],
-        'client_secret': args.client_secret or conf_obj['oauth2'['client_secret']]
+        'client_secret': args.client_secret or conf_obj['oauth2']['client_secret']
     }
 
     conf_obj.write(open(cloud_credentials_file_path, 'w'))
@@ -295,7 +314,8 @@ if __name__ == '__main__':
         os.mkdir(BOX_DIR)
     auth_url, csrf_token = oauth.get_authorization_url('https://diycrate.com:8080/')
     webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
-    notifier_thread = threading.Thread(target=notifier.loop)
-    notifier_thread.daemon = True
-    notifier_thread.start()
-    bottle.run()
+    notifier.start()
+    # notifier_thread = threading.Thread(target=notifier.loop)
+    # notifier_thread.daemon = True
+    # notifier_thread.start()
+    bottle_app.run()
