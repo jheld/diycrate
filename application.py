@@ -1,5 +1,6 @@
 import argparse
 import configparser
+import json
 import os
 import queue
 import threading
@@ -12,11 +13,22 @@ import bottle
 import pyinotify
 from boxsdk import OAuth2, Client
 from boxsdk.exception import BoxAPIException
+from boxsdk.object.folder import File
 from requests.exceptions import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
 cloud_provider_name = 'Box'
 
+version_info = {}
+version_file_path = os.path.expanduser('~/.diycrate/version_info.json')
+if not os.path.exists(version_file_path):
+    if not os.path.exists(os.path.split(version_file_path)[0]):
+        os.makedirs(os.path.split(version_file_path)[0])
+    with open(version_file_path, 'w') as version_handler:
+        json.dump(version_info, version_handler)
+else:
+    with open(version_file_path, 'r') as version_handler:
+        version_info = json.load(version_handler)
 csrf_token = ''
 
 bottle_app = bottle.Bottle()
@@ -40,6 +52,26 @@ upload_queue = queue.Queue()
 
 uploads_given_up_on = []
 
+version_save_look_up_time = 15
+
+
+def version_save_thread():
+    """
+
+    :return:
+    """
+    while True:
+        time.sleep(version_save_look_up_time)
+        if not os.path.exists(os.path.split(version_file_path)[0]):
+            os.makedirs(os.path.split(version_file_path)[0])
+        with open(version_file_path, 'w') as version_file_handler:
+            json.dump(version_info, version_file_handler)
+
+
+version_saver = threading.Thread(target=version_save_thread)
+version_saver.daemon = True
+version_saver.start()
+
 
 def upload_queue_processor():
     """
@@ -49,10 +81,25 @@ def upload_queue_processor():
     while True:
         if upload_queue.not_empty:
             callable_up = upload_queue.get()  # blocks
+            was_list = isinstance(callable_up, list)
+            last_modified_time = None
+            if was_list:
+                last_modified_time, callable_up = callable_up
             num_retries = 15
             for x in range(15):
                 try:
-                    callable_up()
+                    ret_val = callable_up()
+                    if was_list:
+                        item = ret_val  # is the new/updated item
+                        if isinstance(item, File):
+                            client = Client(oauth)
+                            file_obj = client.file(file_id=item.object_id).get()
+                            version_info[item.object_id] = version_info.get(file_obj['id'],
+                                                                            {'fresh_download': True,
+                                                                             'time_stamp': 0, 'etag': '0'})
+                            version_info[file_obj['id']]['fresh_download'] = False
+                            version_info[file_obj['id']]['time_stamp'] = last_modified_time
+                            version_info[file_obj['id']]['etag'] = file_obj['etag']
                     break
                 except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     time.sleep(3)
@@ -73,8 +120,16 @@ def download_queue_processor():
         if download_queue.not_empty:
             item, path = download_queue.get()  # blocks
             if item['type'] == 'file':
-                with open(path, 'wb') as item_handler:
-                    item.download_to(item_handler)
+                if not version_info.get(item['id']) or version_info[item['id']]['etag'] != item['etag']:
+                    with open(path, 'wb') as item_handler:
+                        print('About to download: ', item['name'], item['id'])
+                        item.download_to(item_handler)
+                    was_versioned = item['id'] in version_info
+                    version_info[item['id']] = version_info.get(item['id'], {'etag': item['etag'],
+                                                                             'fresh_download': True,
+                                                                             'time_stamp': time.time()})
+                    version_info[item['id']]['etag'] = item['etag']
+                    version_info[item['id']]['fresh_download'] = not was_versioned
                 download_queue.task_done()
             else:
                 download_queue.task_done()
@@ -228,7 +283,7 @@ class EventHandler(pyinotify.ProcessEvent):
             box_folder = client.folder(folder_id='0').get()
             cur_box_folder = box_folder
             # if we're modifying in root box dir, then we've already found the folder
-            is_base = BOX_DIR in (event.path, event.path[:-1], )
+            is_base = BOX_DIR in (event.path, event.path[:-1],)
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
             last_dir = os.path.split(event.path)[-1]
             if not is_base:
@@ -239,7 +294,8 @@ class EventHandler(pyinotify.ProcessEvent):
                 if not event_was_for_dir and entry['type'] == 'file' and entry['name'] == event.name:
                     if entry['id'] not in self.files_from_box:
                         cur_file = client.file(file_id=entry['id']).get()
-                        cur_file.delete()
+                        if cur_file.delete():  # does not actually check correctly...unless not "ok" is false
+                            del version_info[cur_file['id']]
                     else:
                         self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
                     break
@@ -291,7 +347,9 @@ class EventHandler(pyinotify.ProcessEvent):
                         assert src_folder['name'] == dest_event.name
             if is_file and not did_find_src_file:
                 # src file [should] no longer exist[s]. this file did not originate in box, too.
-                upload_queue.put(partial(cur_box_folder.upload, dest_event.pathname, dest_event.name))
+                last_modified_time = os.path.getmtime(dest_event.pathname)
+                upload_queue.put([last_modified_time,
+                                  partial(cur_box_folder.upload, dest_event.pathname, dest_event.name)])
             elif is_dir and not did_find_src_folder:
                 upload_queue.put(partial(cur_box_folder.create_subfolder, dest_event.name))
                 wm.add_watch(dest_event.pathname, rec=True, mask=mask)
@@ -304,7 +362,7 @@ class EventHandler(pyinotify.ProcessEvent):
             box_folder = client.folder(folder_id='0').get()
             cur_box_folder = box_folder
             # if we're modifying in root box dir, then we've already found the folder
-            is_base = BOX_DIR in (event.path, event.path[:-1], )
+            is_base = BOX_DIR in (event.path, event.path[:-1],)
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
             last_dir = os.path.split(event.path)[-1]
             if not is_base:
@@ -318,6 +376,10 @@ class EventHandler(pyinotify.ProcessEvent):
                 did_find_the_folder = is_dir and entry['type'] == 'folder' and entry['name'] == event.name
                 if did_find_the_file:
                     if entry['id'] not in self.files_from_box:
+                        # more accurately, was this created offline?
+                        AssertionError(False,
+                                       'We should not be able to create a '
+                                       'file that exists in box; should be a close/modify.')
                         print('Update the file: ', event.pathname)
                         a_file = client.file(file_id=entry['id']).get()
                         # seem it is possible to get more than one create (without having a delete in between)
@@ -334,7 +396,8 @@ class EventHandler(pyinotify.ProcessEvent):
                     break
             if is_file and not did_find_the_file:
                 print('Upload the file: ', event.pathname)
-                upload_queue.put(partial(cur_box_folder.upload, event.pathname, event.name))
+                last_modified_time = os.path.getctime(event.pathname)
+                upload_queue.put([last_modified_time, partial(cur_box_folder.upload, event.pathname, event.name)])
             elif is_dir and not did_find_the_folder:
                 print('Upload the folder: ', event.pathname)
                 upload_queue.put(partial(cur_box_folder.create_subfolder, event.pathname, event.name))
@@ -353,7 +416,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     print(traceback.format_exc())
             # if we're modifying in root box dir, then we've already found the folder
-            is_base = BOX_DIR in (event.path, event.path[:-1], )
+            is_base = BOX_DIR in (event.path, event.path[:-1],)
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
             last_dir = os.path.split(event.path)[-1]
             if not is_base:
@@ -367,9 +430,21 @@ class EventHandler(pyinotify.ProcessEvent):
                 did_find_the_file = is_file and entry['type'] == 'file' and entry['name'] == event.name
                 did_find_the_folder = is_dir and entry['type'] == 'folder' and entry['name'] == event.name
                 if did_find_the_file:
+                    last_modified_time = os.path.getmtime(event.pathname)
                     if entry['id'] not in self.files_from_box:
                         cur_file = client.file(file_id=entry['id']).get()
-                        upload_queue.put(partial(cur_file.update_contents, event.pathname))
+                        can_update = True
+                        version_info[cur_file['id']] = version_info.get(cur_file['id'],
+                                                                        {'fresh_download': True,
+                                                                         'etag': '0', 'time_stamp': 0})
+                        item_version = version_info[cur_file['id']]
+                        if cur_file['etag'] == item_version['etag'] and \
+                                (item_version['fresh_download'] and item_version['time_stamp'] >= last_modified_time):
+                            can_update = False
+                        if can_update:
+                            upload_queue.put([last_modified_time,
+                                              partial(cur_file.update_contents, event.pathname)])
+
                     else:
                         self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
                     break
@@ -383,7 +458,9 @@ class EventHandler(pyinotify.ProcessEvent):
                     break
             if is_file and not did_find_the_file:
                 print('Uploading contents...', event.pathname)
-                upload_queue.put(partial(cur_box_folder.upload, event.pathname, event.name))
+                last_modified_time = os.path.getmtime(event.pathname)
+                upload_queue.put([last_modified_time,
+                                  partial(cur_box_folder.upload, event.pathname, event.name)])
             if is_dir and not did_find_the_folder:
                 print('Creating a sub-folder...', event.pathname)
                 upload_queue.put(partial(cur_box_folder.create_subfolder, event.name))
