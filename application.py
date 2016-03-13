@@ -471,11 +471,10 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
     for entry in client.folder(folder_id=box_folder['id']).get()['item_collection']['entries']:
         if entry['type'] == 'folder':
             handler.folders_from_box.append(entry['id'])
-            if entry['name'] in ('test directory', 'Downloads', 'from copy',):
-                local_path = os.path.join(path, entry['name'])
-                if not os.path.isdir(local_path):
-                    os.mkdir(local_path)
-                walk_and_notify_and_download_tree(local_path, client.folder(folder_id=entry['id']).get(), client)
+            local_path = os.path.join(path, entry['name'])
+            if not os.path.isdir(local_path):
+                os.mkdir(local_path)
+            walk_and_notify_and_download_tree(local_path, client.folder(folder_id=entry['id']).get(), client)
         else:
             handler.files_from_box.append(entry['id'])
             download_queue.put((client.file(file_id=entry['id']).get(), os.path.join(path, entry['name'])))
