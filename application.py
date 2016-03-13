@@ -228,23 +228,21 @@ class EventHandler(pyinotify.ProcessEvent):
                                cur_box_folder['name'] + 'not equals ' + last_dir)
             event_was_for_dir = 'IN_ISDIR'.lower() in event.maskname.lower()
             for entry in cur_box_folder['item_collection']['entries']:
-                if not event_was_for_dir:
-                    if entry['type'] == 'file' and entry['name'] == event.name:
-                        if entry['id'] not in self.files_from_box:
-                            cur_file = client.file(file_id=entry['id']).get()
-                            cur_file.delete()
-                        else:
-                            self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
-                        break
-                else:
-                    if entry['type'] == 'folder' and entry['name'] == event.name:
-                        if entry['id'] not in self.folders_from_box:
-                            self.get_folder(client, entry['id']).delete()
-                            # cur_folder = client.folder(folder_id=entry['id']).get()
-                            # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
-                        else:
-                            self.folders_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
-                        break
+                if not event_was_for_dir and entry['type'] == 'file' and entry['name'] == event.name:
+                    if entry['id'] not in self.files_from_box:
+                        cur_file = client.file(file_id=entry['id']).get()
+                        cur_file.delete()
+                    else:
+                        self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
+                    break
+                elif event_was_for_dir and entry['type'] == 'folder' and entry['name'] == event.name:
+                    if entry['id'] not in self.folders_from_box:
+                        self.get_folder(client, entry['id']).delete()
+                        # cur_folder = client.folder(folder_id=entry['id']).get()
+                        # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
+                    else:
+                        self.folders_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
+                    break
         elif operation == 'move':
             print('Doing a move on, ', event)
             src_event, dest_event = event
