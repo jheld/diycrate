@@ -47,9 +47,8 @@ def upload_queue_processor():
     :return:
     """
     while True:
-        time.sleep(2)
         if upload_queue.not_empty:
-            callable_up = upload_queue.get()
+            callable_up = upload_queue.get()  # blocks
             num_retries = 15
             for x in range(15):
                 try:
@@ -71,9 +70,8 @@ def download_queue_processor():
     :return:
     """
     while True:
-        time.sleep(2)
         if download_queue.not_empty:
-            item, path = download_queue.get()
+            item, path = download_queue.get()  # blocks
             if item['type'] == 'file':
                 with open(path, 'wb') as item_handler:
                     item.download_to(item_handler)
@@ -165,7 +163,17 @@ class EventHandler(pyinotify.ProcessEvent):
         :param folder_id:
         :return:
         """
-        return client.folder(folder_id=folder_id).get()
+        folder = None
+        num_retry = 15
+        for x in range(num_retry):
+            try:
+                folder = client.folder(folder_id=folder_id).get()
+                break
+            except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
+                print(traceback.format_exc())
+                if x >= num_retry - 1:
+                    print('Failed for the last time to get the folder: ', folder_id)
+        return folder
 
     @staticmethod
     def folders_to_traverse(event_path):
