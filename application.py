@@ -55,7 +55,7 @@ def upload_queue_processor():
                 try:
                     callable_up()
                     break
-                except (ConnectionError, BrokenPipeError, ProtocolError):
+                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     time.sleep(3)
                     print(traceback.format_exc())
                     if x >= num_retries - 1:
@@ -222,9 +222,10 @@ class EventHandler(pyinotify.ProcessEvent):
             # if we're modifying in root box dir, then we've already found the folder
             is_base = BOX_DIR in (event.path, event.path[:-1], )
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
+            last_dir = os.path.split(event.path)[-1]
             if not is_base:
-                AssertionError(cur_box_folder['name'] == os.path.split(event.path)[-1],
-                               cur_box_folder['name'] + 'not equals ' + os.path.split(event.path)[-1])
+                AssertionError(cur_box_folder['name'] == last_dir,
+                               cur_box_folder['name'] + 'not equals ' + last_dir)
             event_was_for_dir = 'IN_ISDIR'.lower() in event.maskname.lower()
             for entry in cur_box_folder['item_collection']['entries']:
                 if not event_was_for_dir:
@@ -236,7 +237,7 @@ class EventHandler(pyinotify.ProcessEvent):
                             self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
                         break
                 else:
-                    if entry['type'] == 'folder' and entry['name'] == os.path.split(event.pathname)[-1]:
+                    if entry['type'] == 'folder' and entry['name'] == event.name:
                         if entry['id'] not in self.folders_from_box:
                             self.get_folder(client, entry['id']).delete()
                             # cur_folder = client.folder(folder_id=entry['id']).get()
@@ -258,11 +259,15 @@ class EventHandler(pyinotify.ProcessEvent):
             src_box_folder = box_folder
             src_box_folder = self.traverse_path(client, src_event, src_box_folder, src_folders_to_traverse)
             is_rename = src_event.path == dest_event.path
-            did_find_src_file = False
-            is_a_directory = 'IN_ISDIR'.lower() in dest_event.maskname.lower()
+            # is_a_directory = 'IN_ISDIR'.lower() in dest_event.maskname.lower()
+            did_find_src_file = os.path.isdir(dest_event.pathname)  # true if we are a directory :)
+            did_find_src_folder = os.path.isfile(dest_event.pathname)  # true if we are a regular file :)
+            is_file = os.path.isfile(dest_event.pathname)
+            is_dir = os.path.isdir(dest_event.pathname)
             for entry in src_box_folder['item_collection']['entries']:
-                if entry['name'] == src_event.name and entry['type'] == 'file':
-                    did_find_src_file = True
+                did_find_src_file = is_file and entry['name'] == src_event.name and entry['type'] == 'file'
+                did_find_src_folder = is_dir and entry['name'] == src_event.name and entry['type'] == 'folder'
+                if did_find_src_file:
                     src_file = client.file(file_id=entry['id']).get()
                     if is_rename:
                         src_file.rename(dest_event.name)
@@ -270,16 +275,20 @@ class EventHandler(pyinotify.ProcessEvent):
                         src_file.move(cur_box_folder)
                         # do not yet support moving and renaming in one go
                         assert src_file['name'] == dest_event.name
-            if not is_a_directory:
-                if not did_find_src_file:
-                    # src file [should] no longer exist[s]. this file did not originate in box, too.
-                    upload_queue.put(partial(cur_box_folder.upload, dest_event.pathname, dest_event.name))
-            else:
-                if not did_find_src_file:
-                    upload_queue.put(partial(cur_box_folder.create_subfolder, dest_event.name))
-                else:
-                    # TODO: support changing the folder name of a folder that was in box
-                    pass
+                elif did_find_src_folder:
+                    src_folder = client.folder(folder_id=entry['id']).get()
+                    if is_rename:
+                        src_folder.rename(dest_event.name)
+                    else:
+                        src_folder.move(cur_box_folder)
+                        # do not yet support moving and renaming in one go
+                        assert src_folder['name'] == dest_event.name
+            if is_file and not did_find_src_file:
+                # src file [should] no longer exist[s]. this file did not originate in box, too.
+                upload_queue.put(partial(cur_box_folder.upload, dest_event.pathname, dest_event.name))
+            elif is_dir and not did_find_src_folder:
+                upload_queue.put(partial(cur_box_folder.create_subfolder, dest_event.name))
+                wm.add_watch(dest_event.pathname, rec=True, mask=mask)
 
         elif operation == 'create':
             print("Creating:", event.pathname)
@@ -291,38 +300,39 @@ class EventHandler(pyinotify.ProcessEvent):
             # if we're modifying in root box dir, then we've already found the folder
             is_base = BOX_DIR in (event.path, event.path[:-1], )
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
+            last_dir = os.path.split(event.path)[-1]
             if not is_base:
-                assert cur_box_folder['name'] == os.path.split(event.path)[-1]
-            did_find_the_file = False
+                assert cur_box_folder['name'] == last_dir
+            did_find_the_file = os.path.isdir(event.pathname)  # true if we are a directory :)
+            did_find_the_folder = os.path.isfile(event.pathname)  # true if we are a regular file :)
+            is_file = os.path.isfile(event.pathname)
+            is_dir = os.path.isdir(event.pathname)
             for entry in cur_box_folder['item_collection']['entries']:
-                if os.path.isfile(event.pathname):
-                    if entry['type'] == 'file' and entry['name'] == event.name:
-                        did_find_the_file = True
-                        if entry['id'] not in self.files_from_box:
-                            print('Update the file: ', event.pathname)
-                            a_file = client.file(file_id=entry['id']).get()
-                            # seem it is possible to get more than one create (without having a delete in between)
-                            upload_queue.put(partial(a_file.update_contents, event.pathname))
-                            # cur_box_folder.upload(event.pathname, event.name)
-                        else:
-                            self.files_from_box.remove(entry['id'])  # just downloaded it
-                        break
-                else:
-                    did_find_the_file = True  # hack
-                    # else:  # cannot create a sub-folder that already exists
-                    #     if entry['type'] == 'folder' and entry['name'] == os.path.split(event.pathname)[-1]:
-                    #         if entry['id'] not in self.folders_from_box:
-                    #             print('Upload new folder: ', event.pathname)
-                    #             try:
-                    #                 cur_box_folder.create_subfolder(os.path.split(event.pathname)[-1])
-                    #             except boxsdk.exception.BoxAPIException as e:
-                    #                 print(e)
-                    #         else:
-                    #             self.folders_from_box.remove(entry['id'])  # just downloaded it
-                    #         break
-            if not did_find_the_file:
+                did_find_the_file = is_file and entry['type'] == 'file' and entry['name'] == event.name
+                did_find_the_folder = is_dir and entry['type'] == 'folder' and entry['name'] == event.name
+                if did_find_the_file:
+                    if entry['id'] not in self.files_from_box:
+                        print('Update the file: ', event.pathname)
+                        a_file = client.file(file_id=entry['id']).get()
+                        # seem it is possible to get more than one create (without having a delete in between)
+                        upload_queue.put(partial(a_file.update_contents, event.pathname))
+                        # cur_box_folder.upload(event.pathname, event.name)
+                    else:
+                        self.files_from_box.remove(entry['id'])  # just downloaded it
+                    break
+                elif did_find_the_folder:
+                    # we are not going to re-create the folder, but we are also not checking if the contents in this
+                    # local creation are different from the contents in box.
+                    if entry['id'] in self.folders_from_box:
+                        self.folders_from_box.remove(entry['id'])  # just downloaded it
+                    break
+            if is_file and not did_find_the_file:
                 print('Upload the file: ', event.pathname)
                 upload_queue.put(partial(cur_box_folder.upload, event.pathname, event.name))
+            elif is_dir and not did_find_the_folder:
+                print('Upload the folder: ', event.pathname)
+                upload_queue.put(partial(cur_box_folder.create_subfolder, event.pathname, event.name))
+                wm.add_watch(event.pathname, rec=True, mask=mask)
         elif operation == 'close':
             print("Closing...:", event.pathname)
             folders_to_traverse = self.folders_to_traverse(event.path)
@@ -334,42 +344,42 @@ class EventHandler(pyinotify.ProcessEvent):
                     box_folder = client.folder(folder_id='0').get()
                     cur_box_folder = box_folder
                     break
-                except (ConnectionError, BrokenPipeError, ProtocolError):
+                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     print(traceback.format_exc())
             # if we're modifying in root box dir, then we've already found the folder
             is_base = BOX_DIR in (event.path, event.path[:-1], )
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
+            last_dir = os.path.split(event.path)[-1]
             if not is_base:
-                AssertionError(cur_box_folder['name'] == os.path.split(event.path)[-1],
-                               cur_box_folder['name'] + 'not equals ' + os.path.split(event.path)[-1])
+                AssertionError(cur_box_folder['name'] == last_dir,
+                               cur_box_folder['name'] + 'not equals ' + last_dir)
             did_find_the_file = os.path.isdir(event.pathname)  # true if we are a directory :)
             did_find_the_folder = os.path.isfile(event.pathname)  # true if we are a regular file :)
+            is_file = os.path.isfile(event.pathname)
+            is_dir = os.path.isdir(event.pathname)
             for entry in cur_box_folder['item_collection']['entries']:
-                if os.path.isfile(event.pathname):
-                    if entry['type'] == 'file' and entry['name'] == event.name:
-                        did_find_the_file = True
-                        if entry['id'] not in self.files_from_box:
-                            cur_file = client.file(file_id=entry['id']).get()
-                            upload_queue.put(partial(cur_file.update_contents, event.pathname))
-                        else:
-                            self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
-                        break
-                else:
-
-                    if entry['type'] == 'folder' and entry['name'] == os.path.split(event.pathname)[-1]:
-                        did_find_the_folder = True
-                        if entry['id'] not in self.folders_from_box:
-                            print('Cannot create a subfolder when it already exists: ', event.pathname)
-                            # cur_folder = client.folder(folder_id=entry['id']).get()
-                            # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
-                        else:
-                            self.folders_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
-                        break
-            if not did_find_the_file:
+                did_find_the_file = is_file and entry['type'] == 'file' and entry['name'] == event.name
+                did_find_the_folder = is_dir and entry['type'] == 'folder' and entry['name'] == event.name
+                if did_find_the_file:
+                    if entry['id'] not in self.files_from_box:
+                        cur_file = client.file(file_id=entry['id']).get()
+                        upload_queue.put(partial(cur_file.update_contents, event.pathname))
+                    else:
+                        self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
+                    break
+                elif did_find_the_folder:
+                    if entry['id'] not in self.folders_from_box:
+                        print('Cannot create a subfolder when it already exists: ', event.pathname)
+                        # cur_folder = client.folder(folder_id=entry['id']).get()
+                        # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
+                    else:
+                        self.folders_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
+                    break
+            if is_file and not did_find_the_file:
                 print('Uploading contents...', event.pathname)
                 upload_queue.put(partial(cur_box_folder.upload, event.pathname, event.name))
                 # operation(event, do_event=True)
-            if not did_find_the_folder:
+            if is_dir and not did_find_the_folder:
                 print('Creating a sub-folder...', event.pathname)
                 upload_queue.put(partial(cur_box_folder.create_subfolder, event.name))
                 wm.add_watch(event.pathname, rec=True, mask=mask)
