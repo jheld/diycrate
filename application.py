@@ -220,7 +220,7 @@ class EventHandler(pyinotify.ProcessEvent):
             box_folder = client.folder(folder_id='0').get()
             cur_box_folder = box_folder
             # if we're modifying in root box dir, then we've already found the folder
-            is_base = (event.path == BOX_DIR or event.path[:-1] == BOX_DIR)
+            is_base = BOX_DIR in (event.path, event.path[:-1], )
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
             if not is_base:
                 AssertionError(cur_box_folder['name'] == os.path.split(event.path)[-1],
@@ -289,7 +289,7 @@ class EventHandler(pyinotify.ProcessEvent):
             box_folder = client.folder(folder_id='0').get()
             cur_box_folder = box_folder
             # if we're modifying in root box dir, then we've already found the folder
-            is_base = (event.path == BOX_DIR or event.path[:-1] == BOX_DIR)
+            is_base = BOX_DIR in (event.path, event.path[:-1], )
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
             if not is_base:
                 assert cur_box_folder['name'] == os.path.split(event.path)[-1]
@@ -337,7 +337,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 except (ConnectionError, BrokenPipeError, ProtocolError):
                     print(traceback.format_exc())
             # if we're modifying in root box dir, then we've already found the folder
-            is_base = (event.path == BOX_DIR or event.path[:-1] == BOX_DIR)
+            is_base = BOX_DIR in (event.path, event.path[:-1], )
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
             if not is_base:
                 AssertionError(cur_box_folder['name'] == os.path.split(event.path)[-1],
