@@ -174,7 +174,7 @@ class EventHandler(pyinotify.ProcessEvent):
         :param event_path:
         :return:
         """
-        folders_to_traverse = [folder for folder in os.path.split(event_path.replace(BOX_DIR, '')) if
+        folders_to_traverse = [folder for folder in event_path.replace(BOX_DIR, '').split(os.path.sep) if
                                folder and folder != '/']
         if len(folders_to_traverse) and folders_to_traverse[0][0] == '/':
             folders_to_traverse[0] = folders_to_traverse[0][1:]
