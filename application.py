@@ -447,7 +447,8 @@ def store_tokens_callback(access_token, refresh_token):
     :param refresh_token:
     :return:
     """
-    pass
+    assert access_token
+    assert refresh_token
 
 
 # def walk_and_notify_tree(path):
