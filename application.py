@@ -253,7 +253,6 @@ class EventHandler(pyinotify.ProcessEvent):
             box_folder = client.folder(folder_id='0').get()
             cur_box_folder = box_folder
             # if we're modifying in root box dir, then we've already found the folder
-            is_base = (dest_event.path == BOX_DIR or dest_event.path[:-1] == BOX_DIR)
             cur_box_folder = self.traverse_path(client, dest_event, cur_box_folder, folders_to_traverse)
             src_folders_to_traverse = self.folders_to_traverse(src_event.path)
             src_box_folder = box_folder
