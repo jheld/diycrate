@@ -376,62 +376,47 @@ class EventHandler(pyinotify.ProcessEvent):
             if is_file and not did_find_the_file:
                 print('Uploading contents...', event.pathname)
                 upload_queue.put(partial(cur_box_folder.upload, event.pathname, event.name))
-                # operation(event, do_event=True)
             if is_dir and not did_find_the_folder:
                 print('Creating a sub-folder...', event.pathname)
                 upload_queue.put(partial(cur_box_folder.create_subfolder, event.name))
                 wm.add_watch(event.pathname, rec=True, mask=mask)
 
-    def process_IN_CREATE(self, event, do_event=False):
+    def process_IN_CREATE(self, event):
         """
         Overrides the super.
-        :param do_event:
         :param event:
         :return:
         """
-        if do_event:
-            pass
-        else:
-            self.operations.append([event, 'create'])
+        self.operations.append([event, 'create'])
 
-    def process_IN_DELETE(self, event, do_event=False):
+    def process_IN_DELETE(self, event):
         """
         Overrides the super.
-        :param do_event:
         :param event:
         :return:
         """
-        if do_event:
-            print("Removing:", event.pathname)
-        else:
-            self.operations.append([event, 'delete'])
+        self.operations.append([event, 'delete'])
 
-    def process_IN_MODIFY(self, event, do_event=False):
+    def process_IN_MODIFY(self, event):
         """
         Overrides the super.
-        :param do_event:
         :param event:
         :return:
         """
-        if do_event:
-            pass
-        else:
-            self.operations.append([event, 'close'])
+        self.operations.append([event, 'close'])
 
-    def process_IN_MOVED_FROM(self, event, do_event=False):
+    def process_IN_MOVED_FROM(self, event):
         """
         Overrides the super.
-        :param do_event:
         :param event:
         :return:
         """
         print("Moved from:", event.pathname)
         self.move_events.append(event)
 
-    def process_IN_MOVED_TO(self, event, do_event=False):
+    def process_IN_MOVED_TO(self, event):
         """
         Overrides the super.
-        :param do_event:
         :param event:
         :return:
         """
