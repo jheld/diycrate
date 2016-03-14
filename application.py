@@ -434,18 +434,28 @@ class EventHandler(pyinotify.ProcessEvent):
                     if entry['id'] not in self.files_from_box:
                         cur_file = client.file(file_id=entry['id']).get()
                         can_update = True
+                        was_versioned = cur_file['id'] in version_info
                         version_info[cur_file['id']] = version_info.get(cur_file['id'],
                                                                         {'fresh_download': True,
                                                                          'etag': '0', 'time_stamp': 0})
                         item_version = version_info[cur_file['id']]
                         if cur_file['etag'] == item_version['etag'] and \
-                                (item_version['fresh_download'] and item_version['time_stamp'] >= last_modified_time):
+                                ((item_version['fresh_download'] and item_version[
+                                    'time_stamp'] >= last_modified_time) or
+                                     (not item_version['fresh_download'] and item_version[
+                                         'time_stamp'] >= last_modified_time)):
                             can_update = False
                         if can_update:
                             upload_queue.put([last_modified_time,
                                               partial(cur_file.update_contents, event.pathname)])
                         else:
-                            print('Skipping the update: ', event.pathname, cur_file['id'])
+                            print('Skipping the update because not versioned: {}, '
+                                  'fresh_download: {}, '
+                                  'version time_stamp >= '
+                                  'new time stamp: {}'.format(not was_versioned,
+                                                              item_version['fresh_download'],
+                                                              item_version['time_stamp'] >= last_modified_time),
+                                  event.pathname, cur_file['id'])
 
                     else:
                         self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
