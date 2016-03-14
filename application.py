@@ -444,6 +444,8 @@ class EventHandler(pyinotify.ProcessEvent):
                         if can_update:
                             upload_queue.put([last_modified_time,
                                               partial(cur_file.update_contents, event.pathname)])
+                        else:
+                            print('Skipping the update: ', event.pathname, cur_file['id'])
 
                     else:
                         self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
@@ -555,13 +557,11 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
         wm.add_watch(path, mask, rec=False)
     for entry in client.folder(folder_id=box_folder['id']).get()['item_collection']['entries']:
         if entry['type'] == 'folder':
-            handler.folders_from_box.append(entry['id'])
             local_path = os.path.join(path, entry['name'])
             if not os.path.isdir(local_path):
                 os.mkdir(local_path)
             walk_and_notify_and_download_tree(local_path, client.folder(folder_id=entry['id']).get(), client)
         else:
-            handler.files_from_box.append(entry['id'])
             download_queue.put((client.file(file_id=entry['id']).get(), os.path.join(path, entry['name'])))
             # open(os.path.join(path, entry['name']), 'wb').write(client.file(file_id=entry['id']).get().content())
 
