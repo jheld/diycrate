@@ -101,7 +101,7 @@ def upload_queue_processor():
                             version_info[file_obj['id']]['time_stamp'] = last_modified_time
                             version_info[file_obj['id']]['etag'] = file_obj['etag']
                     break
-                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
+                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
                     time.sleep(3)
                     print(traceback.format_exc())
                     if x >= num_retries - 1:
@@ -224,7 +224,7 @@ class EventHandler(pyinotify.ProcessEvent):
             try:
                 folder = client.folder(folder_id=folder_id).get()
                 break
-            except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
+            except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
                 print(traceback.format_exc())
                 if x >= num_retry - 1:
                     print('Failed for the last time to get the folder: ', folder_id)
@@ -413,7 +413,7 @@ class EventHandler(pyinotify.ProcessEvent):
                     box_folder = client.folder(folder_id='0').get()
                     cur_box_folder = box_folder
                     break
-                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
+                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
                     print(traceback.format_exc())
             # if we're modifying in root box dir, then we've already found the folder
             is_base = BOX_DIR in (event.path, event.path[:-1],)
@@ -477,6 +477,45 @@ class EventHandler(pyinotify.ProcessEvent):
                 print('Creating a sub-folder...', event.pathname)
                 upload_queue.put(partial(cur_box_folder.create_subfolder, event.name))
                 wm.add_watch(event.pathname, rec=True, mask=mask)
+        elif operation == 'real_close':
+            print("Real  close...:", event.pathname)
+            folders_to_traverse = self.folders_to_traverse(event.path)
+            print(folders_to_traverse)
+            client = Client(oauth)
+            box_folder = cur_box_folder = None
+            for _ in range(5):
+                try:
+                    box_folder = client.folder(folder_id='0').get()
+                    cur_box_folder = box_folder
+                    break
+                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
+                    print(traceback.format_exc())
+            # if we're modifying in root box dir, then we've already found the folder
+            is_base = BOX_DIR in (event.path, event.path[:-1],)
+            cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
+            last_dir = os.path.split(event.path)[-1]
+            if not is_base:
+                AssertionError(cur_box_folder['name'] == last_dir,
+                               cur_box_folder['name'] + 'not equals ' + last_dir)
+            did_find_the_file = os.path.isdir(event.pathname)  # true if we are a directory :)
+            did_find_the_folder = os.path.isfile(event.pathname)  # true if we are a regular file :)
+            is_file = os.path.isfile(event.pathname)
+            is_dir = os.path.isdir(event.pathname)
+            for entry in cur_box_folder['item_collection']['entries']:
+                did_find_the_file = is_file and entry['type'] == 'file' and entry['name'] == event.name
+                did_find_the_folder = is_dir and entry['type'] == 'folder' and entry['name'] == event.name
+                if did_find_the_file:
+                    break
+            # not a box file/folder (though could have been copied from a local box item)
+            if not did_find_the_file and not did_find_the_folder:
+                if is_file:
+                    last_modified_time = os.path.getmtime(event.pathname)
+                    upload_queue.put([last_modified_time,
+                                      partial(cur_box_folder.upload, event.pathname, event.name)])
+                elif is_dir:
+                    cur_box_folder.create_subfolder(event.name)
+                    wm.add_watch(event.pathname, rec=True, mask=mask)
+                    # TODO: recursively add this directory to box
 
     def process_IN_CREATE(self, event):
         """
@@ -529,6 +568,10 @@ class EventHandler(pyinotify.ProcessEvent):
         if not found_from:
             self.operations.append([event, 'close'])  # "close"/"modify" seems appropriate
         print("Moved to:", event.pathname)
+
+    def process_IN_CLOSE(self, event):
+        print('Had a close on:', event)
+        self.operations.append([event, 'real_close'])
 
 
 handler = EventHandler()
