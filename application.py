@@ -507,15 +507,14 @@ class EventHandler(pyinotify.ProcessEvent):
                 if did_find_the_file:
                     break
             # not a box file/folder (though could have been copied from a local box item)
-            if not did_find_the_file and not did_find_the_folder:
-                if is_file:
-                    last_modified_time = os.path.getmtime(event.pathname)
-                    upload_queue.put([last_modified_time,
-                                      partial(cur_box_folder.upload, event.pathname, event.name)])
-                elif is_dir:
-                    cur_box_folder.create_subfolder(event.name)
-                    wm.add_watch(event.pathname, rec=True, mask=mask)
-                    # TODO: recursively add this directory to box
+            if is_file and not did_find_the_file:
+                last_modified_time = os.path.getmtime(event.pathname)
+                upload_queue.put([last_modified_time,
+                                  partial(cur_box_folder.upload, event.pathname, event.name)])
+            elif is_dir and not did_find_the_folder:
+                cur_box_folder.create_subfolder(event.name)
+                wm.add_watch(event.pathname, rec=True, mask=mask)
+                # TODO: recursively add this directory to box
 
     def process_IN_CREATE(self, event):
         """
