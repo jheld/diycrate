@@ -97,6 +97,8 @@ def redis_set(obj, last_modified_time, fresh_download=False):
     r_c.set(key, pickle.dumps({'fresh_download': fresh_download,
                                'time_stamp': last_modified_time,
                                'etag': obj['etag']}))
+    r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
+
 
 def redis_get(obj):
     """
@@ -161,6 +163,8 @@ def download_queue_processor():
                     with open(path, 'wb') as item_handler:
                         print('About to download: ', item['name'], item['id'])
                         item.download_to(item_handler)
+                        path_to_add = os.path.dirname(path)
+                        wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
                     was_versioned = r_c.exists(redis_key(item['id']))
                     #
                     # version_info[item['id']] = version_info.get(item['id'], {'etag': item['etag'],
@@ -554,7 +558,7 @@ class EventHandler(pyinotify.ProcessEvent):
                                   partial(cur_box_folder.upload, event.pathname, event.name)])
             elif is_dir and not did_find_the_folder:
                 cur_box_folder.create_subfolder(event.name)
-                wm.add_watch(event.pathname, rec=True, mask=mask)
+                wm.add_watch(event.pathname, rec=True, mask=mask, auto_add=True)
                 # TODO: recursively add this directory to box
 
     def process_IN_CREATE(self, event):
@@ -647,7 +651,7 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
     :return:
     """
     if os.path.isdir(path):
-        wm.add_watch(path, mask, rec=False)
+        wm.add_watch(path, mask, rec=True, auto_add=True)
     for entry in client.folder(folder_id=box_folder['id']).get()['item_collection']['entries']:
         if entry['type'] == 'folder':
             local_path = os.path.join(path, entry['name'])
