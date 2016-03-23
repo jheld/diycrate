@@ -667,12 +667,13 @@ def long_poll_event_listener():
     client = Client(oauth=oauth)
     while True:
         stream_position = client.events().get_latest_stream_position()
-        for event in client.events().generate_events_with_long_polling():
-            if event['event_type'] != 'ITEM_DOWNLOAD':
+        for event in client.events().generate_events_with_long_polling(stream_position=stream_position):
+            if event.get('message', '').lower() == 'reconnect':
+                break
+            if event['event_type'] == 'ITEM_UPLOAD':
                 obj_id = event['source']['id']
                 obj_type = event['source']['type']
-                was_versioned = r_c.exists(redis_key(obj_id))
-                if not was_versioned:
+                if obj_type == 'file':
                     if int(event['source']['path_collection']['total_count']) > 1:
                         path = '{}'.format(os.path.pathsep).join([folder['name']
                                                                   for folder in
@@ -680,14 +681,40 @@ def long_poll_event_listener():
                     else:
                         path = ''
                     path = os.path.join(BOX_DIR, path)
-                    with open(os.path.join(path, event['source']['name']), 'w') as new_file_handler:
-                        client.file(file_id=obj_id).get().download_to(new_file_handler)
-
-                    r_c.set(redis_key([obj_id]), pickle.dumps({'etag': event['source']['etag'],
-                                            'fresh_download': True,
-                                            'time_stamp': time.time()}))
-                else:
-                    pass
+                    download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
+                # was_versioned = r_c.exists(redis_key(obj_id))
+                # if not was_versioned:
+                #     if int(event['source']['path_collection']['total_count']) > 1:
+                #         path = '{}'.format(os.path.pathsep).join([folder['name']
+                #                                                   for folder in
+                #                                                   event['source']['path_collection']['entries'][1:]])
+                #     else:
+                #         path = ''
+                #     path = os.path.join(BOX_DIR, path)
+                #     download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
+                #     # with open(os.path.join(path, event['source']['name']), 'w') as new_file_handler:
+                #     #     client.file(file_id=obj_id).get().download_to(new_file_handler)
+                #     #
+                #     # r_c.set(redis_key([obj_id]), pickle.dumps({'etag': event['source']['etag'],
+                #     #                         'fresh_download': True,
+                #     #                         'time_stamp': time.time()}))
+                # else:
+                #     pass
+            elif event['event_type'] == 'ITEM_TRASH':
+                obj_id = event['source']['id']
+                obj_type = event['source']['type']
+                if obj_type == 'file':
+                    if int(event['source']['path_collection']['total_count']) > 1:
+                        path = '{}'.format(os.path.pathsep).join([folder['name']
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][1:]])
+                    else:
+                        path = ''
+                    path = os.path.join(BOX_DIR, path)
+                    os.unlink(os.path.join(path, event['source']['name']))
+                    r_c.delete(redis_key(obj_id))
+            else:
+                print(event, ' happened!')
 
 
 long_poll_thread = threading.Thread(target=long_poll_event_listener)
@@ -711,8 +738,8 @@ def oauth_handler():
     upload_thread.start()
     # local trash can
     wm.add_watch(trash_directory, mask=in_moved_to | in_moved_from)
-    # if not long_poll_thread.is_alive():  # start before doing anything else
-    #     long_poll_thread.start()
+    if not long_poll_thread.is_alive():  # start before doing anything else
+        long_poll_thread.start()
     walk_and_notify_and_download_tree(BOX_DIR, box_folder, client)
 
     return 'OK'
