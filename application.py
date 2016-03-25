@@ -13,6 +13,9 @@ from functools import partial
 import redis
 import bottle
 import pyinotify
+from cherrypy import wsgiserver
+from cherrypy.wsgiserver import ssl_builtin
+from bottle import ServerAdapter
 from boxsdk import OAuth2, Client
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.folder import File
@@ -56,7 +59,6 @@ uploads_given_up_on = []
 
 version_save_look_up_time = 15
 
-
 # def version_save_thread():
 #     """
 #
@@ -84,6 +86,7 @@ def redis_key(key):
     :return:
     """
     return 'diy_crate.version.{}'.format(key)
+
 
 def redis_set(obj, last_modified_time, fresh_download=False):
     """
@@ -173,7 +176,7 @@ def download_queue_processor():
                     # version_info[item['id']]['etag'] = item['etag']
                     # version_info[item['id']]['fresh_download'] = not was_versioned
                     # version_info[item['id']]['time_stamp'] = os.path.getmtime(path)  # duh...since we have it!
-                    redis_set(item, os.path.getmtime(path),fresh_download=not was_versioned)
+                    redis_set(item, os.path.getmtime(path), fresh_download=not was_versioned)
                 download_queue.task_done()
             else:
                 download_queue.task_done()
@@ -686,24 +689,24 @@ def long_poll_event_listener():
                         path = ''
                     path = os.path.join(BOX_DIR, path)
                     download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
-                # was_versioned = r_c.exists(redis_key(obj_id))
-                # if not was_versioned:
-                #     if int(event['source']['path_collection']['total_count']) > 1:
-                #         path = '{}'.format(os.path.pathsep).join([folder['name']
-                #                                                   for folder in
-                #                                                   event['source']['path_collection']['entries'][1:]])
-                #     else:
-                #         path = ''
-                #     path = os.path.join(BOX_DIR, path)
-                #     download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
-                #     # with open(os.path.join(path, event['source']['name']), 'w') as new_file_handler:
-                #     #     client.file(file_id=obj_id).get().download_to(new_file_handler)
-                #     #
-                #     # r_c.set(redis_key([obj_id]), pickle.dumps({'etag': event['source']['etag'],
-                #     #                         'fresh_download': True,
-                #     #                         'time_stamp': time.time()}))
-                # else:
-                #     pass
+                    # was_versioned = r_c.exists(redis_key(obj_id))
+                    # if not was_versioned:
+                    #     if int(event['source']['path_collection']['total_count']) > 1:
+                    #         path = '{}'.format(os.path.pathsep).join([folder['name']
+                    #                                                   for folder in
+                    #                                                   event['source']['path_collection']['entries'][1:]])
+                    #     else:
+                    #         path = ''
+                    #     path = os.path.join(BOX_DIR, path)
+                    #     download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
+                    #     # with open(os.path.join(path, event['source']['name']), 'w') as new_file_handler:
+                    #     #     client.file(file_id=obj_id).get().download_to(new_file_handler)
+                    #     #
+                    #     # r_c.set(redis_key([obj_id]), pickle.dumps({'etag': event['source']['etag'],
+                    #     #                         'fresh_download': True,
+                    #     #                         'time_stamp': time.time()}))
+                    # else:
+                    #     pass
             elif event['event_type'] == 'ITEM_TRASH':
                 obj_id = event['source']['id']
                 obj_type = event['source']['type']
@@ -725,6 +728,8 @@ long_poll_thread = threading.Thread(target=long_poll_event_listener)
 long_poll_thread.daemon = True
 
 
+walk_thread = None
+
 @bottle_app.route('/')
 def oauth_handler():
     """
@@ -744,9 +749,28 @@ def oauth_handler():
     wm.add_watch(trash_directory, mask=in_moved_to | in_moved_from)
     if not long_poll_thread.is_alive():  # start before doing anything else
         long_poll_thread.start()
-    walk_and_notify_and_download_tree(BOX_DIR, box_folder, client)
+    # walk_and_notify_and_download_tree(BOX_DIR, box_folder, client)
+    global walk_thread
+    walk_thread = threading.Thread(target=walk_and_notify_and_download_tree, args=(BOX_DIR, box_folder, client,))
+    walk_thread.daemon = True
+    walk_thread.start()
 
     return 'OK'
+
+
+# Create our own sub-class of Bottle's ServerAdapter
+# so that we can specify SSL. Using just server='cherrypy'
+# uses the default cherrypy server, which doesn't use SSL
+class SSLCherryPyServer(ServerAdapter):
+    def run(self, server_handler):
+        server = wsgiserver.CherryPyWSGIServer((self.host, self.port), server_handler)
+        # Uses the following github page's recommendation for setting up the cert:
+        # https://github.com/nickbabcock/bottle-ssl
+        server.ssl_adapter = ssl_builtin.BuiltinSSLAdapter('cacert.pem', 'privkey.pem')
+        try:
+            server.start()
+        finally:
+            server.stop()
 
 
 if __name__ == '__main__':
@@ -796,4 +820,4 @@ if __name__ == '__main__':
     # notifier_thread = threading.Thread(target=notifier.loop)
     # notifier_thread.daemon = True
     # notifier_thread.start()
-    bottle_app.run()
+    bottle_app.run(server=SSLCherryPyServer)
