@@ -7,10 +7,15 @@ import threading
 import time
 import traceback
 import webbrowser
+import pickle
 from functools import partial
 
+import redis
 import bottle
 import pyinotify
+from cherrypy import wsgiserver
+from cherrypy.wsgiserver import ssl_builtin
+from bottle import ServerAdapter
 from boxsdk import OAuth2, Client
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.folder import File
@@ -19,16 +24,16 @@ from requests.packages.urllib3.exceptions import ProtocolError
 
 cloud_provider_name = 'Box'
 
-version_info = {}
-version_file_path = os.path.expanduser('~/.diycrate/version_info.json')
-if not os.path.exists(version_file_path):
-    if not os.path.exists(os.path.split(version_file_path)[0]):
-        os.makedirs(os.path.split(version_file_path)[0])
-    with open(version_file_path, 'w') as version_handler:
-        json.dump(version_info, version_handler)
-else:
-    with open(version_file_path, 'r') as version_handler:
-        version_info = json.load(version_handler)
+# version_info = {}
+# version_file_path = os.path.expanduser('~/.diycrate/version_info.json')
+# if not os.path.exists(version_file_path):
+#     if not os.path.exists(os.path.split(version_file_path)[0]):
+#         os.makedirs(os.path.split(version_file_path)[0])
+#     with open(version_file_path, 'w') as version_handler:
+#         json.dump(version_info, version_handler)
+# else:
+#     with open(version_file_path, 'r') as version_handler:
+#         version_info = json.load(version_handler)
 csrf_token = ''
 
 bottle_app = bottle.Bottle()
@@ -54,23 +59,58 @@ uploads_given_up_on = []
 
 version_save_look_up_time = 15
 
+# def version_save_thread():
+#     """
+#
+#     :return:
+#     """
+#     while True:
+#         time.sleep(version_save_look_up_time)
+#         if not os.path.exists(os.path.split(version_file_path)[0]):
+#             os.makedirs(os.path.split(version_file_path)[0])
+#         with open(version_file_path, 'w') as version_file_handler:
+#             json.dump(version_info, version_file_handler)
 
-def version_save_thread():
+
+# version_saver = threading.Thread(target=version_save_thread)
+# version_saver.daemon = True
+# version_saver.start()
+
+r_c = redis.StrictRedis()
+
+
+def redis_key(key):
     """
 
+    :param key:
     :return:
     """
-    while True:
-        time.sleep(version_save_look_up_time)
-        if not os.path.exists(os.path.split(version_file_path)[0]):
-            os.makedirs(os.path.split(version_file_path)[0])
-        with open(version_file_path, 'w') as version_file_handler:
-            json.dump(version_info, version_file_handler)
+    return 'diy_crate.version.{}'.format(key)
 
 
-version_saver = threading.Thread(target=version_save_thread)
-version_saver.daemon = True
-version_saver.start()
+def redis_set(obj, last_modified_time, fresh_download=False):
+    """
+
+    :param obj:
+    :param last_modified_time:
+    :param fresh_download:
+    :return:
+    """
+    key = redis_key(obj['id'])
+    r_c.set(key, pickle.dumps({'fresh_download': fresh_download,
+                               'time_stamp': last_modified_time,
+                               'etag': obj['etag']}))
+    r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
+
+
+def redis_get(obj):
+    """
+
+    :param obj:
+    :return:
+    """
+    key = redis_key(obj['id'])
+    return pickle.loads(r_c.get(key))
 
 
 def upload_queue_processor():
@@ -94,12 +134,13 @@ def upload_queue_processor():
                         if isinstance(item, File):
                             client = Client(oauth)
                             file_obj = client.file(file_id=item.object_id).get()
-                            version_info[item.object_id] = version_info.get(file_obj['id'],
-                                                                            {'fresh_download': True,
-                                                                             'time_stamp': 0, 'etag': '0'})
-                            version_info[file_obj['id']]['fresh_download'] = False
-                            version_info[file_obj['id']]['time_stamp'] = last_modified_time
-                            version_info[file_obj['id']]['etag'] = file_obj['etag']
+                            # version_info[item.object_id] = version_info.get(file_obj['id'],
+                            #                                                 {'fresh_download': True,
+                            #                                                  'time_stamp': 0, 'etag': '0'})
+                            # version_info[file_obj['id']]['fresh_download'] = False
+                            # version_info[file_obj['id']]['time_stamp'] = last_modified_time
+                            # version_info[file_obj['id']]['etag'] = file_obj['etag']
+                            redis_set(file_obj, last_modified_time)
                     break
                 except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
                     time.sleep(3)
@@ -120,16 +161,22 @@ def download_queue_processor():
         if download_queue.not_empty:
             item, path = download_queue.get()  # blocks
             if item['type'] == 'file':
-                if not version_info.get(item['id']) or version_info[item['id']]['etag'] != item['etag']:
+                info = redis_get(item) if r_c.exists(redis_key(item['id'])) else None
+                if not info or info['etag'] != item['etag']:
                     with open(path, 'wb') as item_handler:
                         print('About to download: ', item['name'], item['id'])
                         item.download_to(item_handler)
-                    was_versioned = item['id'] in version_info
-                    version_info[item['id']] = version_info.get(item['id'], {'etag': item['etag'],
-                                                                             'fresh_download': True,
-                                                                             'time_stamp': time.time()})
-                    version_info[item['id']]['etag'] = item['etag']
-                    version_info[item['id']]['fresh_download'] = not was_versioned
+                        path_to_add = os.path.dirname(path)
+                        wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
+                    was_versioned = r_c.exists(redis_key(item['id']))
+                    #
+                    # version_info[item['id']] = version_info.get(item['id'], {'etag': item['etag'],
+                    #                                                          'fresh_download': True,
+                    #                                                          'time_stamp': time.time()})
+                    # version_info[item['id']]['etag'] = item['etag']
+                    # version_info[item['id']]['fresh_download'] = not was_versioned
+                    # version_info[item['id']]['time_stamp'] = os.path.getmtime(path)  # duh...since we have it!
+                    redis_set(item, os.path.getmtime(path), fresh_download=not was_versioned)
                 download_queue.task_done()
             else:
                 download_queue.task_done()
@@ -295,7 +342,8 @@ class EventHandler(pyinotify.ProcessEvent):
                     if entry['id'] not in self.files_from_box:
                         cur_file = client.file(file_id=entry['id']).get()
                         if cur_file.delete():  # does not actually check correctly...unless not "ok" is false
-                            del version_info[cur_file['id']]
+                            # del version_info[cur_file['id']]
+                            r_c.delete(redis_key(cur_file['id']))
                     else:
                         self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
                     break
@@ -434,11 +482,11 @@ class EventHandler(pyinotify.ProcessEvent):
                     if entry['id'] not in self.files_from_box:
                         cur_file = client.file(file_id=entry['id']).get()
                         can_update = True
-                        was_versioned = cur_file['id'] in version_info
-                        version_info[cur_file['id']] = version_info.get(cur_file['id'],
-                                                                        {'fresh_download': True,
-                                                                         'etag': '0', 'time_stamp': 0})
-                        item_version = version_info[cur_file['id']]
+                        was_versioned = r_c.exists(redis_key(cur_file['id']))
+                        info = redis_get(cur_file)
+                        info = info if was_versioned else {'fresh_download': True,
+                                                           'etag': '0', 'time_stamp': 0}
+                        item_version = info
                         if cur_file['etag'] == item_version['etag'] and \
                                 ((item_version['fresh_download'] and item_version[
                                     'time_stamp'] >= last_modified_time) or
@@ -513,7 +561,7 @@ class EventHandler(pyinotify.ProcessEvent):
                                   partial(cur_box_folder.upload, event.pathname, event.name)])
             elif is_dir and not did_find_the_folder:
                 cur_box_folder.create_subfolder(event.name)
-                wm.add_watch(event.pathname, rec=True, mask=mask)
+                wm.add_watch(event.pathname, rec=True, mask=mask, auto_add=True)
                 # TODO: recursively add this directory to box
 
     def process_IN_CREATE(self, event):
@@ -606,7 +654,7 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
     :return:
     """
     if os.path.isdir(path):
-        wm.add_watch(path, mask, rec=False)
+        wm.add_watch(path, mask, rec=True, auto_add=True)
     for entry in client.folder(folder_id=box_folder['id']).get()['item_collection']['entries']:
         if entry['type'] == 'folder':
             local_path = os.path.join(path, entry['name'])
@@ -617,6 +665,70 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
             download_queue.put((client.file(file_id=entry['id']).get(), os.path.join(path, entry['name'])))
             # open(os.path.join(path, entry['name']), 'wb').write(client.file(file_id=entry['id']).get().content())
 
+
+def long_poll_event_listener():
+    """
+
+    :return:
+    """
+    client = Client(oauth=oauth)
+    while True:
+        stream_position = client.events().get_latest_stream_position()
+        for event in client.events().generate_events_with_long_polling(stream_position=stream_position):
+            if event.get('message', '').lower() == 'reconnect':
+                break
+            if event['event_type'] == 'ITEM_UPLOAD':
+                obj_id = event['source']['id']
+                obj_type = event['source']['type']
+                if obj_type == 'file':
+                    if int(event['source']['path_collection']['total_count']) > 1:
+                        path = '{}'.format(os.path.pathsep).join([folder['name']
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][1:]])
+                    else:
+                        path = ''
+                    path = os.path.join(BOX_DIR, path)
+                    download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
+                    # was_versioned = r_c.exists(redis_key(obj_id))
+                    # if not was_versioned:
+                    #     if int(event['source']['path_collection']['total_count']) > 1:
+                    #         path = '{}'.format(os.path.pathsep).join([folder['name']
+                    #                                                   for folder in
+                    #                                                   event['source']['path_collection']['entries'][1:]])
+                    #     else:
+                    #         path = ''
+                    #     path = os.path.join(BOX_DIR, path)
+                    #     download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
+                    #     # with open(os.path.join(path, event['source']['name']), 'w') as new_file_handler:
+                    #     #     client.file(file_id=obj_id).get().download_to(new_file_handler)
+                    #     #
+                    #     # r_c.set(redis_key([obj_id]), pickle.dumps({'etag': event['source']['etag'],
+                    #     #                         'fresh_download': True,
+                    #     #                         'time_stamp': time.time()}))
+                    # else:
+                    #     pass
+            elif event['event_type'] == 'ITEM_TRASH':
+                obj_id = event['source']['id']
+                obj_type = event['source']['type']
+                if obj_type == 'file':
+                    if int(event['source']['path_collection']['total_count']) > 1:
+                        path = '{}'.format(os.path.pathsep).join([folder['name']
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][1:]])
+                    else:
+                        path = ''
+                    path = os.path.join(BOX_DIR, path)
+                    os.unlink(os.path.join(path, event['source']['name']))
+                    r_c.delete(redis_key(obj_id))
+            else:
+                print(event, ' happened!')
+
+
+long_poll_thread = threading.Thread(target=long_poll_event_listener)
+long_poll_thread.daemon = True
+
+
+walk_thread = None
 
 @bottle_app.route('/')
 def oauth_handler():
@@ -635,9 +747,30 @@ def oauth_handler():
     upload_thread.start()
     # local trash can
     wm.add_watch(trash_directory, mask=in_moved_to | in_moved_from)
-    walk_and_notify_and_download_tree(BOX_DIR, box_folder, client)
+    if not long_poll_thread.is_alive():  # start before doing anything else
+        long_poll_thread.start()
+    # walk_and_notify_and_download_tree(BOX_DIR, box_folder, client)
+    global walk_thread
+    walk_thread = threading.Thread(target=walk_and_notify_and_download_tree, args=(BOX_DIR, box_folder, client,))
+    walk_thread.daemon = True
+    walk_thread.start()
 
     return 'OK'
+
+
+# Create our own sub-class of Bottle's ServerAdapter
+# so that we can specify SSL. Using just server='cherrypy'
+# uses the default cherrypy server, which doesn't use SSL
+class SSLCherryPyServer(ServerAdapter):
+    def run(self, server_handler):
+        server = wsgiserver.CherryPyWSGIServer((self.host, self.port), server_handler)
+        # Uses the following github page's recommendation for setting up the cert:
+        # https://github.com/nickbabcock/bottle-ssl
+        server.ssl_adapter = ssl_builtin.BuiltinSSLAdapter('cacert.pem', 'privkey.pem')
+        try:
+            server.start()
+        finally:
+            server.stop()
 
 
 if __name__ == '__main__':
@@ -687,4 +820,4 @@ if __name__ == '__main__':
     # notifier_thread = threading.Thread(target=notifier.loop)
     # notifier_thread.daemon = True
     # notifier_thread.start()
-    bottle_app.run()
+    bottle_app.run(server=SSLCherryPyServer)
