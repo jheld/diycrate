@@ -762,7 +762,15 @@ def oauth_handler():
 # so that we can specify SSL. Using just server='cherrypy'
 # uses the default cherrypy server, which doesn't use SSL
 class SSLCherryPyServer(ServerAdapter):
+    """
+    Custom server adapter using cherry-py with ssl
+    """
     def run(self, server_handler):
+        """
+        Overrides super to setup Cherry py with ssl and start the server.
+        :param server_handler: originating server type
+        :type server_handler:
+        """
         server = wsgiserver.CherryPyWSGIServer((self.host, self.port), server_handler)
         # Uses the following github page's recommendation for setting up the cert:
         # https://github.com/nickbabcock/bottle-ssl
