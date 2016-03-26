@@ -97,9 +97,17 @@ def redis_set(obj, last_modified_time, fresh_download=False):
     :return:
     """
     key = redis_key(obj['id'])
+    if int(obj['path_collection']['total_count']) > 1:
+        path = '{}'.format(os.path.pathsep).join([folder['name']
+                                                  for folder in
+                                                  obj['path_collection']['entries'][1:]])
+    else:
+        path = ''
+    path = os.path.join(BOX_DIR, path)
     r_c.set(key, pickle.dumps({'fresh_download': fresh_download,
                                'time_stamp': last_modified_time,
-                               'etag': obj['etag']}))
+                               'etag': obj['etag'],
+                               'file_path': os.path.join(path, obj['name'])}))
     r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
 
 
@@ -162,6 +170,11 @@ def download_queue_processor():
             item, path = download_queue.get()  # blocks
             if item['type'] == 'file':
                 info = redis_get(item) if r_c.exists(redis_key(item['id'])) else None
+                client = Client(oauth)
+                # hack because we did not use to store the file_path, but do not want to force a download
+                if info and 'file_path' not in info:
+                    info['file_path'] = path
+                    r_c.set(redis_key(item['id']), pickle.dumps(info))
                 if not info or info['etag'] != item['etag']:
                     with open(path, 'wb') as item_handler:
                         print('About to download: ', item['name'], item['id'])
@@ -374,6 +387,7 @@ class EventHandler(pyinotify.ProcessEvent):
             did_find_src_folder = os.path.isfile(dest_event.pathname)  # true if we are a regular file :)
             is_file = os.path.isfile(dest_event.pathname)
             is_dir = os.path.isdir(dest_event.pathname)
+            move_from_remote = False
             for entry in src_box_folder['item_collection']['entries']:
                 did_find_src_file = is_file and entry['name'] == src_event.name and entry['type'] == 'file'
                 did_find_src_folder = is_dir and entry['name'] == src_event.name and entry['type'] == 'folder'
@@ -393,14 +407,25 @@ class EventHandler(pyinotify.ProcessEvent):
                         src_folder.move(cur_box_folder)
                         # do not yet support moving and renaming in one go
                         assert src_folder['name'] == dest_event.name
-            if is_file and not did_find_src_file:
-                # src file [should] no longer exist[s]. this file did not originate in box, too.
-                last_modified_time = os.path.getmtime(dest_event.pathname)
-                upload_queue.put([last_modified_time,
-                                  partial(cur_box_folder.upload, dest_event.pathname, dest_event.name)])
-            elif is_dir and not did_find_src_folder:
-                upload_queue.put(partial(cur_box_folder.create_subfolder, dest_event.name))
-                wm.add_watch(dest_event.pathname, rec=True, mask=mask)
+                elif entry['name'] == dest_event.name:
+                    move_from_remote = True
+            if not move_from_remote:  # if it was moved from a different folder on remote, could be false still
+                dest_box_folder = box_folder
+                dest_folders_to_traverse = self.folders_to_traverse(dest_event.path)
+                dest_box_folder = self.traverse_path(client, dest_event, dest_box_folder, dest_folders_to_traverse)
+                for entry in dest_box_folder['item_collection']['entries']:
+                    if entry['name'] == dest_event.name:
+                        move_from_remote = True
+                        break
+                if not move_from_remote:
+                    if is_file and not did_find_src_file:
+                        # src file [should] no longer exist[s]. this file did not originate in box, too.
+                        last_modified_time = os.path.getmtime(dest_event.pathname)
+                        upload_queue.put([last_modified_time,
+                                          partial(cur_box_folder.upload, dest_event.pathname, dest_event.name)])
+                    elif is_dir and not did_find_src_folder:
+                        upload_queue.put(partial(cur_box_folder.create_subfolder, dest_event.name))
+                        wm.add_watch(dest_event.pathname, rec=True, mask=mask)
 
         elif operation == 'create':
             print("Creating:", event.pathname)
@@ -675,9 +700,10 @@ def long_poll_event_listener():
     while True:
         stream_position = client.events().get_latest_stream_position()
         for event in client.events().generate_events_with_long_polling(stream_position=stream_position):
+            print(event, ' happened!')
             if event.get('message', '').lower() == 'reconnect':
                 break
-            if event['event_type'] == 'ITEM_UPLOAD':
+            if event['event_type'] == 'ITEM_RENAME':
                 obj_id = event['source']['id']
                 obj_type = event['source']['type']
                 if obj_type == 'file':
@@ -688,6 +714,31 @@ def long_poll_event_listener():
                     else:
                         path = ''
                     path = os.path.join(BOX_DIR, path)
+                    file_path = os.path.join(path, event['source']['name'])
+                    file_obj = client.file(file_id=obj_id).get()
+                    src_file_path = None if not r_c.exists(redis_key(obj_id)) else redis_get(file_obj)['file_path']
+                    if src_file_path and os.path.exists(src_file_path):
+                        version_info = redis_get(obj=file_obj)
+                        src_file_path = version_info['file_path']
+                        os.rename(src_file_path, file_path)
+                        version_info['file_path'] = file_path
+                        version_info['etag'] = file_obj['etag']
+                        r_c.set(redis_key(obj_id), pickle.dumps(version_info))
+                    else:
+                        download_queue.put([file_obj, file_path])
+            elif event['event_type'] == 'ITEM_UPLOAD':
+                obj_id = event['source']['id']
+                obj_type = event['source']['type']
+                if obj_type == 'file':
+                    if int(event['source']['path_collection']['total_count']) > 1:
+                        path = '{}'.format(os.path.pathsep).join([folder['name']
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][1:]])
+                    else:
+                        path = ''
+                    path = os.path.join(BOX_DIR, path)
+                    if not os.path.exists(path):  # just in case this is a file in a new subfolder
+                        os.makedirs(path)
                     download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
                     # was_versioned = r_c.exists(redis_key(obj_id))
                     # if not was_versioned:
@@ -718,11 +769,13 @@ def long_poll_event_listener():
                     else:
                         path = ''
                     path = os.path.join(BOX_DIR, path)
-                    os.unlink(os.path.join(path, event['source']['name']))
-                    r_c.delete(redis_key(obj_id))
-            else:
-                print(event, ' happened!')
-
+                    file_path = os.path.join(path, event['source']['name'])
+                    if os.path.exists(file_path):
+                        os.unlink(file_path)
+                    if r_c.exists(redis_key(obj_id)):
+                        r_c.delete(redis_key(obj_id))
+            elif event['event_type'] == 'ITEM_DOWNLOAD':
+                pass
 
 long_poll_thread = threading.Thread(target=long_poll_event_listener)
 long_poll_thread.daemon = True
