@@ -508,27 +508,30 @@ class EventHandler(pyinotify.ProcessEvent):
                         cur_file = client.file(file_id=entry['id']).get()
                         can_update = True
                         was_versioned = r_c.exists(redis_key(cur_file['id']))
-                        info = redis_get(cur_file)
-                        info = info if was_versioned else {'fresh_download': True,
-                                                           'etag': '0', 'time_stamp': 0}
-                        item_version = info
-                        if cur_file['etag'] == item_version['etag'] and \
-                                ((item_version['fresh_download'] and item_version[
-                                    'time_stamp'] >= last_modified_time) or
-                                     (not item_version['fresh_download'] and item_version[
-                                         'time_stamp'] >= last_modified_time)):
-                            can_update = False
-                        if can_update:
-                            upload_queue.put([last_modified_time,
-                                              partial(cur_file.update_contents, event.pathname)])
-                        else:
-                            print('Skipping the update because not versioned: {}, '
-                                  'fresh_download: {}, '
-                                  'version time_stamp >= '
-                                  'new time stamp: {}'.format(not was_versioned,
-                                                              item_version['fresh_download'],
-                                                              item_version['time_stamp'] >= last_modified_time),
-                                  event.pathname, cur_file['id'])
+                        try:
+                            info = redis_get(cur_file)
+                            info = info if was_versioned else {'fresh_download': True,
+                                                               'etag': '0', 'time_stamp': 0}
+                            item_version = info
+                            if cur_file['etag'] == item_version['etag'] and \
+                                    ((item_version['fresh_download'] and item_version[
+                                        'time_stamp'] >= last_modified_time) or
+                                         (not item_version['fresh_download'] and item_version[
+                                             'time_stamp'] >= last_modified_time)):
+                                can_update = False
+                            if can_update:
+                                upload_queue.put([last_modified_time,
+                                                  partial(cur_file.update_contents, event.pathname)])
+                            else:
+                                print('Skipping the update because not versioned: {}, '
+                                      'fresh_download: {}, '
+                                      'version time_stamp >= '
+                                      'new time stamp: {}'.format(not was_versioned,
+                                                                  item_version['fresh_download'],
+                                                                  item_version['time_stamp'] >= last_modified_time),
+                                      event.pathname, cur_file['id'])
+                        except TypeError as e:
+                            print(traceback.format_exc())
 
                     else:
                         self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
