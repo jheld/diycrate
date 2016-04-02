@@ -157,6 +157,9 @@ def upload_queue_processor():
                         print('Upload giving up on: {}'.format(callable_up))
                         # no immediate plans to do anything with this info, yet.
                         uploads_given_up_on.append(callable_up)
+                except (TypeError, FileNotFoundError) as e:
+                    print(traceback.format_exc())
+                    break
             upload_queue.task_done()
 
 
@@ -683,7 +686,10 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
     """
     if os.path.isdir(path):
         wm.add_watch(path, mask, rec=True, auto_add=True)
+        local_files = os.listdir(path)
     for entry in client.folder(folder_id=box_folder['id']).get()['item_collection']['entries']:
+        if entry['name'] in local_files:
+            local_files.remove(entry['name'])
         if entry['type'] == 'folder':
             local_path = os.path.join(path, entry['name'])
             if not os.path.isdir(local_path):
@@ -692,6 +698,11 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
         else:
             download_queue.put((client.file(file_id=entry['id']).get(), os.path.join(path, entry['name'])))
             # open(os.path.join(path, entry['name']), 'wb').write(client.file(file_id=entry['id']).get().content())
+    for local_file in local_files:
+        cur_box_folder = client.folder(folder_id=box_folder['id']).get()
+        local_path = os.path.join(path, local_file)
+        if os.path.isfile(local_path):
+            upload_queue.put([os.path.getmtime(local_path), partial(cur_box_folder.upload, local_path, local_file)])
 
 
 def long_poll_event_listener():
