@@ -696,8 +696,17 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
                 os.mkdir(local_path)
             walk_and_notify_and_download_tree(local_path, client.folder(folder_id=entry['id']).get(), client)
         else:
-            download_queue.put((client.file(file_id=entry['id']).get(), os.path.join(path, entry['name'])))
-            # open(os.path.join(path, entry['name']), 'wb').write(client.file(file_id=entry['id']).get().content())
+            try:
+                file_obj = client.file(file_id=entry['id']).get()
+                download_queue.put((file_obj, os.path.join(path, entry['name'])))
+                # open(os.path.join(path, entry['name']), 'wb').write(client.file(file_id=entry['id']).get().content())
+            except BoxAPIException as e:
+                print(traceback.format_exc())
+                if e.status == 404:
+                    print('Box says: {}, {}, is a 404 status.'.format(entry['id'], entry['name']))
+                    if r_c.exists(redis_key(entry['id'])):
+                        print('Deleting {}, {}'.format(entry['id'], entry['name']))
+                        r_c.delete(redis_key(entry['id']))
     for local_file in local_files:
         cur_box_folder = client.folder(folder_id=box_folder['id']).get()
         local_path = os.path.join(path, local_file)
