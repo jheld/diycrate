@@ -1,24 +1,23 @@
 import argparse
 import configparser
-import json
 import os
+import pickle
 import queue
 import threading
 import time
 import traceback
 import webbrowser
-import pickle
 from functools import partial
 
-import redis
 import bottle
 import pyinotify
-from cherrypy import wsgiserver
-from cherrypy.wsgiserver import ssl_builtin
+import redis
 from bottle import ServerAdapter
 from boxsdk import OAuth2, Client
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.folder import File
+from cherrypy import wsgiserver
+from cherrypy.wsgiserver import ssl_builtin
 from requests.exceptions import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
@@ -690,6 +689,14 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
     for entry in client.folder(folder_id=box_folder['id']).get()['item_collection']['entries']:
         if entry['name'] in local_files:
             local_files.remove(entry['name'])
+    for local_file in local_files:  # prioritize the local_files not yet on box's server.
+        cur_box_folder = client.folder(folder_id=box_folder['id']).get()
+        local_path = os.path.join(path, local_file)
+        if os.path.isfile(local_path):
+            upload_queue.put([os.path.getmtime(local_path), partial(cur_box_folder.upload, local_path, local_file)])
+    for entry in client.folder(folder_id=box_folder['id']).get()['item_collection']['entries']:
+        if entry['name'] in local_files:
+            local_files.remove(entry['name'])
         if entry['type'] == 'folder':
             local_path = os.path.join(path, entry['name'])
             if not os.path.isdir(local_path):
@@ -707,12 +714,6 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
                     if r_c.exists(redis_key(entry['id'])):
                         print('Deleting {}, {}'.format(entry['id'], entry['name']))
                         r_c.delete(redis_key(entry['id']))
-    for local_file in local_files:
-        cur_box_folder = client.folder(folder_id=box_folder['id']).get()
-        local_path = os.path.join(path, local_file)
-        if os.path.isfile(local_path):
-            upload_queue.put([os.path.getmtime(local_path), partial(cur_box_folder.upload, local_path, local_file)])
-
 
 def long_poll_event_listener():
     """
