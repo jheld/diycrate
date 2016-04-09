@@ -23,16 +23,6 @@ from requests.packages.urllib3.exceptions import ProtocolError
 
 cloud_provider_name = 'Box'
 
-# version_info = {}
-# version_file_path = os.path.expanduser('~/.diycrate/version_info.json')
-# if not os.path.exists(version_file_path):
-#     if not os.path.exists(os.path.split(version_file_path)[0]):
-#         os.makedirs(os.path.split(version_file_path)[0])
-#     with open(version_file_path, 'w') as version_handler:
-#         json.dump(version_info, version_handler)
-# else:
-#     with open(version_file_path, 'r') as version_handler:
-#         version_info = json.load(version_handler)
 csrf_token = ''
 
 bottle_app = bottle.Bottle()
@@ -55,25 +45,6 @@ download_queue = queue.Queue()
 upload_queue = queue.Queue()
 
 uploads_given_up_on = []
-
-version_save_look_up_time = 15
-
-# def version_save_thread():
-#     """
-#
-#     :return:
-#     """
-#     while True:
-#         time.sleep(version_save_look_up_time)
-#         if not os.path.exists(os.path.split(version_file_path)[0]):
-#             os.makedirs(os.path.split(version_file_path)[0])
-#         with open(version_file_path, 'w') as version_file_handler:
-#             json.dump(version_info, version_file_handler)
-
-
-# version_saver = threading.Thread(target=version_save_thread)
-# version_saver.daemon = True
-# version_saver.start()
 
 r_c = redis.StrictRedis()
 
