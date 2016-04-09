@@ -108,6 +108,7 @@ def redis_set(obj, last_modified_time, fresh_download=False):
                                'etag': obj['etag'],
                                'file_path': os.path.join(path, obj['name'])}))
     r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
+    # assert redis_get(obj)
 
 
 def redis_get(obj):
@@ -177,7 +178,8 @@ def download_queue_processor():
                 if info and 'file_path' not in info:
                     info['file_path'] = path
                     r_c.set(redis_key(item['id']), pickle.dumps(info))
-                if not info or info['etag'] != item['etag']:
+                # no version, or diff version, or the file does not exist locally
+                if not info or info['etag'] != item['etag'] or not os.path.exists(path):
                     with open(path, 'wb') as item_handler:
                         print('About to download: ', item['name'], item['id'])
                         item.download_to(item_handler)
@@ -715,6 +717,13 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
                         print('Deleting {}, {}'.format(entry['id'], entry['name']))
                         r_c.delete(redis_key(entry['id']))
 
+
+def re_walk(path, box_folder, client):
+    while True:
+        walk_and_notify_and_download_tree(path, box_folder, client)
+        time.sleep(3600)  # once an hour we walk the tree
+
+
 def long_poll_event_listener():
     """
 
@@ -722,84 +731,87 @@ def long_poll_event_listener():
     """
     client = Client(oauth=oauth)
     while True:
-        stream_position = client.events().get_latest_stream_position()
-        for event in client.events().generate_events_with_long_polling(stream_position=stream_position):
-            print(event, ' happened!')
-            if event.get('message', '').lower() == 'reconnect':
-                break
-            if event['event_type'] == 'ITEM_RENAME':
-                obj_id = event['source']['id']
-                obj_type = event['source']['type']
-                if obj_type == 'file':
-                    if int(event['source']['path_collection']['total_count']) > 1:
-                        path = '{}'.format(os.path.pathsep).join([folder['name']
-                                                                  for folder in
-                                                                  event['source']['path_collection']['entries'][1:]])
-                    else:
-                        path = ''
-                    path = os.path.join(BOX_DIR, path)
-                    file_path = os.path.join(path, event['source']['name'])
-                    file_obj = client.file(file_id=obj_id).get()
-                    src_file_path = None if not r_c.exists(redis_key(obj_id)) else redis_get(file_obj)['file_path']
-                    if src_file_path and os.path.exists(src_file_path):
-                        version_info = redis_get(obj=file_obj)
-                        src_file_path = version_info['file_path']
-                        os.rename(src_file_path, file_path)
-                        version_info['file_path'] = file_path
-                        version_info['etag'] = file_obj['etag']
-                        r_c.set(redis_key(obj_id), pickle.dumps(version_info))
-                    else:
-                        download_queue.put([file_obj, file_path])
-            elif event['event_type'] == 'ITEM_UPLOAD':
-                obj_id = event['source']['id']
-                obj_type = event['source']['type']
-                if obj_type == 'file':
-                    if int(event['source']['path_collection']['total_count']) > 1:
-                        path = '{}'.format(os.path.pathsep).join([folder['name']
-                                                                  for folder in
-                                                                  event['source']['path_collection']['entries'][1:]])
-                    else:
-                        path = ''
-                    path = os.path.join(BOX_DIR, path)
-                    if not os.path.exists(path):  # just in case this is a file in a new subfolder
-                        os.makedirs(path)
-                    download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
-                    # was_versioned = r_c.exists(redis_key(obj_id))
-                    # if not was_versioned:
-                    #     if int(event['source']['path_collection']['total_count']) > 1:
-                    #         path = '{}'.format(os.path.pathsep).join([folder['name']
-                    #                                                   for folder in
-                    #                                                   event['source']['path_collection']['entries'][1:]])
-                    #     else:
-                    #         path = ''
-                    #     path = os.path.join(BOX_DIR, path)
-                    #     download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
-                    #     # with open(os.path.join(path, event['source']['name']), 'w') as new_file_handler:
-                    #     #     client.file(file_id=obj_id).get().download_to(new_file_handler)
-                    #     #
-                    #     # r_c.set(redis_key([obj_id]), pickle.dumps({'etag': event['source']['etag'],
-                    #     #                         'fresh_download': True,
-                    #     #                         'time_stamp': time.time()}))
-                    # else:
-                    #     pass
-            elif event['event_type'] == 'ITEM_TRASH':
-                obj_id = event['source']['id']
-                obj_type = event['source']['type']
-                if obj_type == 'file':
-                    if int(event['source']['path_collection']['total_count']) > 1:
-                        path = '{}'.format(os.path.pathsep).join([folder['name']
-                                                                  for folder in
-                                                                  event['source']['path_collection']['entries'][1:]])
-                    else:
-                        path = ''
-                    path = os.path.join(BOX_DIR, path)
-                    file_path = os.path.join(path, event['source']['name'])
-                    if os.path.exists(file_path):
-                        os.unlink(file_path)
-                    if r_c.exists(redis_key(obj_id)):
-                        r_c.delete(redis_key(obj_id))
-            elif event['event_type'] == 'ITEM_DOWNLOAD':
-                pass
+        try:
+            stream_position = client.events().get_latest_stream_position()
+            for event in client.events().generate_events_with_long_polling(stream_position=stream_position):
+                print(event, ' happened!')
+                if event.get('message', '').lower() == 'reconnect':
+                    break
+                if event['event_type'] == 'ITEM_RENAME':
+                    obj_id = event['source']['id']
+                    obj_type = event['source']['type']
+                    if obj_type == 'file':
+                        if int(event['source']['path_collection']['total_count']) > 1:
+                            path = '{}'.format(os.path.pathsep).join([folder['name']
+                                                                      for folder in
+                                                                      event['source']['path_collection']['entries'][1:]])
+                        else:
+                            path = ''
+                        path = os.path.join(BOX_DIR, path)
+                        file_path = os.path.join(path, event['source']['name'])
+                        file_obj = client.file(file_id=obj_id).get()
+                        src_file_path = None if not r_c.exists(redis_key(obj_id)) else redis_get(file_obj)['file_path']
+                        if src_file_path and os.path.exists(src_file_path):
+                            version_info = redis_get(obj=file_obj)
+                            src_file_path = version_info['file_path']
+                            os.rename(src_file_path, file_path)
+                            version_info['file_path'] = file_path
+                            version_info['etag'] = file_obj['etag']
+                            r_c.set(redis_key(obj_id), pickle.dumps(version_info))
+                        else:
+                            download_queue.put([file_obj, file_path])
+                elif event['event_type'] == 'ITEM_UPLOAD':
+                    obj_id = event['source']['id']
+                    obj_type = event['source']['type']
+                    if obj_type == 'file':
+                        if int(event['source']['path_collection']['total_count']) > 1:
+                            path = '{}'.format(os.path.pathsep).join([folder['name']
+                                                                      for folder in
+                                                                      event['source']['path_collection']['entries'][1:]])
+                        else:
+                            path = ''
+                        path = os.path.join(BOX_DIR, path)
+                        if not os.path.exists(path):  # just in case this is a file in a new subfolder
+                            os.makedirs(path)
+                        download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
+                        # was_versioned = r_c.exists(redis_key(obj_id))
+                        # if not was_versioned:
+                        #     if int(event['source']['path_collection']['total_count']) > 1:
+                        #         path = '{}'.format(os.path.pathsep).join([folder['name']
+                        #                                                   for folder in
+                        #                                                   event['source']['path_collection']['entries'][1:]])
+                        #     else:
+                        #         path = ''
+                        #     path = os.path.join(BOX_DIR, path)
+                        #     download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
+                        #     # with open(os.path.join(path, event['source']['name']), 'w') as new_file_handler:
+                        #     #     client.file(file_id=obj_id).get().download_to(new_file_handler)
+                        #     #
+                        #     # r_c.set(redis_key([obj_id]), pickle.dumps({'etag': event['source']['etag'],
+                        #     #                         'fresh_download': True,
+                        #     #                         'time_stamp': time.time()}))
+                        # else:
+                        #     pass
+                elif event['event_type'] == 'ITEM_TRASH':
+                    obj_id = event['source']['id']
+                    obj_type = event['source']['type']
+                    if obj_type == 'file':
+                        if int(event['source']['path_collection']['total_count']) > 1:
+                            path = '{}'.format(os.path.pathsep).join([folder['name']
+                                                                      for folder in
+                                                                      event['source']['path_collection']['entries'][1:]])
+                        else:
+                            path = ''
+                        path = os.path.join(BOX_DIR, path)
+                        file_path = os.path.join(path, event['source']['name'])
+                        if os.path.exists(file_path):
+                            os.unlink(file_path)
+                        if r_c.exists(redis_key(obj_id)):
+                            r_c.delete(redis_key(obj_id))
+                elif event['event_type'] == 'ITEM_DOWNLOAD':
+                    pass
+        except Exception:
+            print(traceback.format_exc())
 
 long_poll_thread = threading.Thread(target=long_poll_event_listener)
 long_poll_thread.daemon = True
@@ -828,7 +840,7 @@ def oauth_handler():
         long_poll_thread.start()
     # walk_and_notify_and_download_tree(BOX_DIR, box_folder, client)
     global walk_thread
-    walk_thread = threading.Thread(target=walk_and_notify_and_download_tree, args=(BOX_DIR, box_folder, client,))
+    walk_thread = threading.Thread(target=re_walk, args=(BOX_DIR, box_folder, client,))
     walk_thread.daemon = True
     walk_thread.start()
 
