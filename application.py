@@ -1,7 +1,7 @@
 import argparse
 import configparser
 import os
-import pickle
+import json
 import queue
 import threading
 import time
@@ -74,7 +74,7 @@ def redis_set(obj, last_modified_time, fresh_download=False):
     else:
         path = ''
     path = os.path.join(BOX_DIR, path)
-    r_c.set(key, pickle.dumps({'fresh_download': fresh_download,
+    r_c.set(key, json.dumps({'fresh_download': fresh_download,
                                'time_stamp': last_modified_time,
                                'etag': obj['etag'],
                                'file_path': os.path.join(path, obj['name'])}))
@@ -89,7 +89,7 @@ def redis_get(obj):
     :return:
     """
     key = redis_key(obj['id'])
-    return pickle.loads(r_c.get(key))
+    return json.loads(str(r_c.get(key), encoding='utf-8', errors='strict'))
 
 
 def upload_queue_processor():
@@ -148,7 +148,7 @@ def download_queue_processor():
                 # hack because we did not use to store the file_path, but do not want to force a download
                 if info and 'file_path' not in info:
                     info['file_path'] = path
-                    r_c.set(redis_key(item['id']), pickle.dumps(info))
+                    r_c.set(redis_key(item['id']), json.dumps(info))
                 # no version, or diff version, or the file does not exist locally
                 if not info or info['etag'] != item['etag'] or not os.path.exists(path):
                     with open(path, 'wb') as item_handler:
@@ -728,7 +728,7 @@ def long_poll_event_listener():
                             os.rename(src_file_path, file_path)
                             version_info['file_path'] = file_path
                             version_info['etag'] = file_obj['etag']
-                            r_c.set(redis_key(obj_id), pickle.dumps(version_info))
+                            r_c.set(redis_key(obj_id), json.dumps(version_info))
                         else:
                             download_queue.put([file_obj, file_path])
                 elif event['event_type'] == 'ITEM_UPLOAD':
@@ -758,7 +758,7 @@ def long_poll_event_listener():
                         #     # with open(os.path.join(path, event['source']['name']), 'w') as new_file_handler:
                         #     #     client.file(file_id=obj_id).get().download_to(new_file_handler)
                         #     #
-                        #     # r_c.set(redis_key([obj_id]), pickle.dumps({'etag': event['source']['etag'],
+                        #     # r_c.set(redis_key([obj_id]), json.dumps({'etag': event['source']['etag'],
                         #     #                         'fresh_download': True,
                         #     #                         'time_stamp': time.time()}))
                         # else:
