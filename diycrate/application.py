@@ -947,7 +947,7 @@ if __name__ == '__main__':
     if not os.path.isdir(BOX_DIR):
         os.mkdir(BOX_DIR)
     if not r_c.exists('diy_crate.auth.access_token') and not r_c.exists('diy_crate.auth.refresh_token'):
-        auth_url, csrf_token = oauth.get_authorization_url('https://diycrate.com:8080/')
+        auth_url, csrf_token = oauth.get_authorization_url('https://localhost:8080/')
         webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
     else:
         start_manual_synching()
