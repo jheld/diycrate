@@ -41,7 +41,7 @@ setup(
     description=("box.com for linux -- unofficial, based on python SDK"),
     license="MIT",
     keywords="cloud storage box.com sdk linux",
-    url="http://packages.python.org/diycrate",
+    url="https://github.com/jheld/diycrate",
     install_requires=packages,
     long_description=read('README.md'),
     classifiers=[
