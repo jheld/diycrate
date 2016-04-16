@@ -153,20 +153,26 @@ def download_queue_processor():
                     r_c.set(redis_key(item['id']), json.dumps(info))
                 # no version, or diff version, or the file does not exist locally
                 if not info or info['etag'] != item['etag'] or not os.path.exists(path):
-                    with open(path, 'wb') as item_handler:
-                        print('About to download: ', item['name'], item['id'])
-                        item.download_to(item_handler)
-                        path_to_add = os.path.dirname(path)
-                        wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
-                    was_versioned = r_c.exists(redis_key(item['id']))
-                    #
-                    # version_info[item['id']] = version_info.get(item['id'], {'etag': item['etag'],
-                    #                                                          'fresh_download': True,
-                    #                                                          'time_stamp': time.time()})
-                    # version_info[item['id']]['etag'] = item['etag']
-                    # version_info[item['id']]['fresh_download'] = not was_versioned
-                    # version_info[item['id']]['time_stamp'] = os.path.getmtime(path)  # duh...since we have it!
-                    redis_set(item, os.path.getmtime(path), fresh_download=not was_versioned, folder=os.path.dirname(path))
+                    try:
+                        for i in range(15):
+                            with open(path, 'wb') as item_handler:
+                                print('About to download: ', item['name'], item['id'])
+                                item.download_to(item_handler)
+                                path_to_add = os.path.dirname(path)
+                                wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
+                            was_versioned = r_c.exists(redis_key(item['id']))
+                            #
+                            # version_info[item['id']] = version_info.get(item['id'], {'etag': item['etag'],
+                            #                                                          'fresh_download': True,
+                            #                                                          'time_stamp': time.time()})
+                            # version_info[item['id']]['etag'] = item['etag']
+                            # version_info[item['id']]['fresh_download'] = not was_versioned
+                            # version_info[item['id']]['time_stamp'] = os.path.getmtime(path)  # duh...since we have it!
+                            redis_set(item, os.path.getmtime(path), fresh_download=not was_versioned, folder=os.path.dirname(path))
+                            break
+                    except (ConnectionResetError, ConnectionError):
+                        print(traceback.format_exc())
+                        time.sleep(5)
                 download_queue.task_done()
             else:
                 download_queue.task_done()
@@ -465,7 +471,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 upload_queue.put([last_modified_time, partial(cur_box_folder.upload, event.pathname, event.name)])
             elif is_dir and not did_find_the_folder:
                 print('Upload the folder: ', event.pathname)
-                upload_queue.put(partial(cur_box_folder.create_subfolder, event.pathname, event.name))
+                upload_queue.put(partial(cur_box_folder.create_subfolder, event.name))
                 wm.add_watch(event.pathname, rec=True, mask=mask)
         elif operation == 'close':
             print("Closing...:", event.pathname)
