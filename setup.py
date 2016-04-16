@@ -25,5 +25,12 @@ setup(
         "Development Status :: 3 - Alpha",
         "Topic :: Utilities",
         "License :: OSI Approved :: MIT License",
+        'Intended Audience :: End Users/Desktop',
+        'Intended Audience :: Developers',
+        'Operating System :: Linux',
+        'Environment :: Console',
+        'Environment :: Web Environment',
+        'Intended Audience :: End Users/Desktop',
+        'Programming Language :: Python :: 3.5',
     ],
 )
