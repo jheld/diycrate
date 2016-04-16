@@ -23,7 +23,7 @@ setup(
     keywords = "cloud storage box.com sdk linux",
     url = "http://packages.python.org/diycrate",
     packages=[str(ir.req) for ir in packages_for_install],
-    long_description=read('README'),
+    long_description=read('README.md'),
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Topic :: Utilities",
