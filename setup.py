@@ -19,7 +19,7 @@ setup(
     license = "MIT",
     keywords = "cloud storage box.com sdk linux",
     url = "http://packages.python.org/diycrate",
-    packages=[package for package in open('./requirements.txt').read().splitlines()],
+    install_requires=[package for package in open('./requirements.txt').read().splitlines()],
     long_description=read('README.md'),
     classifiers=[
         "Development Status :: 3 - Alpha",
