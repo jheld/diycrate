@@ -12,7 +12,7 @@ def read(file_name):
 
 setup(
     name = "diycrate",
-    version = "0.2.9",
+    version = "0.2.10",
     author = "Jason Held",
     author_email = "jasonsheld@gmail.com",
     description = ("box.com for linux -- unofficial, based on python SDK"),
@@ -25,7 +25,6 @@ setup(
         "Development Status :: 3 - Alpha",
         "Topic :: Utilities",
         "License :: OSI Approved :: MIT License",
-        'Intended Audience :: End Users/Desktop',
         'Intended Audience :: Developers',
         'Operating System :: POSIX :: Linux',
         'Environment :: Console',
