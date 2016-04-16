@@ -77,9 +77,9 @@ def redis_set(obj, last_modified_time, fresh_download=False, folder=None):
         path = ''
     path = os.path.join(BOX_DIR, path)
     r_c.set(key, json.dumps({'fresh_download': fresh_download,
-                               'time_stamp': last_modified_time,
-                               'etag': obj['etag'],
-                               'file_path': os.path.join(path, obj['name'])}))
+                             'time_stamp': last_modified_time,
+                             'etag': obj['etag'],
+                             'file_path': os.path.join(path, obj['name'])}))
     r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
     # assert redis_get(obj)
 
@@ -168,7 +168,8 @@ def download_queue_processor():
                             # version_info[item['id']]['etag'] = item['etag']
                             # version_info[item['id']]['fresh_download'] = not was_versioned
                             # version_info[item['id']]['time_stamp'] = os.path.getmtime(path)  # duh...since we have it!
-                            redis_set(item, os.path.getmtime(path), fresh_download=not was_versioned, folder=os.path.dirname(path))
+                            redis_set(item, os.path.getmtime(path), fresh_download=not was_versioned,
+                                      folder=os.path.dirname(path))
                             break
                     except (ConnectionResetError, ConnectionError):
                         print(traceback.format_exc())
@@ -717,7 +718,6 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
                 try:
                     file_obj = box_item
                     download_queue.put((file_obj, os.path.join(path, box_item['name'])))
-                    # open(os.path.join(path, box_item['name']), 'wb').write(client.file(file_id=box_item['id']).get().content())
                 except BoxAPIException as e:
                     print(traceback.format_exc())
                     if e.status == 404:
@@ -753,7 +753,8 @@ def long_poll_event_listener():
                         if int(event['source']['path_collection']['total_count']) > 1:
                             path = '{}'.format(os.path.pathsep).join([folder['name']
                                                                       for folder in
-                                                                      event['source']['path_collection']['entries'][1:]])
+                                                                      event['source']['path_collection']['entries'][
+                                                                      1:]])
                         else:
                             path = ''
                         path = os.path.join(BOX_DIR, path)
@@ -776,13 +777,15 @@ def long_poll_event_listener():
                         if int(event['source']['path_collection']['total_count']) > 1:
                             path = '{}'.format(os.path.pathsep).join([folder['name']
                                                                       for folder in
-                                                                      event['source']['path_collection']['entries'][1:]])
+                                                                      event['source']['path_collection']['entries'][
+                                                                      1:]])
                         else:
                             path = ''
                         path = os.path.join(BOX_DIR, path)
                         if not os.path.exists(path):  # just in case this is a file in a new subfolder
                             os.makedirs(path)
-                        download_queue.put([client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
+                        download_queue.put(
+                            [client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name'])])
                         # was_versioned = r_c.exists(redis_key(obj_id))
                         # if not was_versioned:
                         #     if int(event['source']['path_collection']['total_count']) > 1:
@@ -808,7 +811,8 @@ def long_poll_event_listener():
                         if int(event['source']['path_collection']['total_count']) > 1:
                             path = '{}'.format(os.path.pathsep).join([folder['name']
                                                                       for folder in
-                                                                      event['source']['path_collection']['entries'][1:]])
+                                                                      event['source']['path_collection']['entries'][
+                                                                      1:]])
                         else:
                             path = ''
                         path = os.path.join(BOX_DIR, path)
@@ -822,11 +826,12 @@ def long_poll_event_listener():
         except Exception:
             print(traceback.format_exc())
 
+
 long_poll_thread = threading.Thread(target=long_poll_event_listener)
 long_poll_thread.daemon = True
 
-
 walk_thread = None
+
 
 @bottle_app.route('/')
 def oauth_handler():
@@ -867,6 +872,7 @@ class SSLCherryPyServer(ServerAdapter):
     """
     Custom server adapter using cherry-py with ssl
     """
+
     def run(self, server_handler):
         """
         Overrides super to setup Cherry py with ssl and start the server.

@@ -35,7 +35,7 @@ packages = ['bottle==0.12.9',
 
 setup(
     name="diycrate",
-    version="0.2.13",
+    version="0.2.14",
     author="Jason Held",
     author_email="jasonsheld@gmail.com",
     description=("box.com for linux -- unofficial, based on python SDK"),
@@ -43,7 +43,18 @@ setup(
     keywords="cloud storage box.com sdk linux",
     url="https://github.com/jheld/diycrate",
     install_requires=packages,
-    long_description=read('README.md'),
+    packages=['diycrate', ],
+    long_description='box.com for linux\n'
+                     'We now support SSL (self signed cert\'s yo)!'
+                     'Unfortunately, this means getting openssl, ffi,'
+                     'and python dev libraries installed, beforehand.'
+                     'Also, you will need redis, but I do supply that '
+                     'inside the source code, so all you have to do is '
+                     'run "make" and "sudo make install" on the [untar\'d] redis directory.'
+                     'I have not documented explicitly how to get this thing running, yet, '
+                     'so please give me time, or make an Issue on this project '
+                     'to let me know someone is actually trying to use it. '
+                     'If we want, I can even try packaging this up as deb and rpm to make the setup easier.',
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Topic :: Utilities",
