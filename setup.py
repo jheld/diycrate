@@ -12,14 +12,15 @@ def read(file_name):
 
 setup(
     name = "diycrate",
-    version = "0.2.10",
+    version = "0.2.11",
     author = "Jason Held",
     author_email = "jasonsheld@gmail.com",
     description = ("box.com for linux -- unofficial, based on python SDK"),
     license = "MIT",
     keywords = "cloud storage box.com sdk linux",
     url = "http://packages.python.org/diycrate",
-    install_requires=[package for package in open('./requirements.txt').read().splitlines()],
+    install_requires=[package for package in open(os.path.join(os.path.dirname(__file__),
+                                                               'requirements.txt')).read().splitlines()],
     long_description=read('README.md'),
     classifiers=[
         "Development Status :: 3 - Alpha",
