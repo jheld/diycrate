@@ -670,6 +670,8 @@ def store_tokens_callback(access_token, refresh_token):
     """
     assert access_token
     assert refresh_token
+    r_c.set('diy_crate.auth.access_token', access_token)
+    r_c.set('diy_crate.auth.refresh_token', refresh_token)
 
 
 # def walk_and_notify_tree(path):
@@ -834,6 +836,12 @@ def oauth_handler():
     """
     assert csrf_token == bottle.request.GET['state']
     access_token, refresh_token = oauth.authenticate(bottle.request.GET['code'])
+    start_manual_synching()
+
+    return 'OK'
+
+
+def start_manual_synching():
     client = Client(oauth)
     wm.add_watch(BOX_DIR, mask, rec=False)
     box_folder = client.folder(folder_id='0').get()
@@ -850,8 +858,6 @@ def oauth_handler():
     walk_thread = threading.Thread(target=re_walk, args=(BOX_DIR, box_folder, client,))
     walk_thread.daemon = True
     walk_thread.start()
-
-    return 'OK'
 
 
 # Create our own sub-class of Bottle's ServerAdapter
@@ -906,6 +912,8 @@ if __name__ == '__main__':
         client_id=conf_obj['oauth2']['client_id'],
         client_secret=conf_obj['oauth2']['client_secret'],
         store_tokens=store_tokens_callback,
+        access_token=r_c.get('diy_crate.auth.access_token'),
+        refresh_token=r_c.get('diy_crate.auth.refresh_token')
     )
     had_box = conf_obj.has_section('box')
     if not had_box:
@@ -918,10 +926,14 @@ if __name__ == '__main__':
     BOX_DIR = os.path.expanduser(conf_obj['box']['directory'])
     if not os.path.isdir(BOX_DIR):
         os.mkdir(BOX_DIR)
-    auth_url, csrf_token = oauth.get_authorization_url('https://diycrate.com:8080/')
-    webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
+    if not r_c.exists('diy_crate.auth.access_token') and not r_c.exists('diy_crate.auth.refresh_token'):
+        auth_url, csrf_token = oauth.get_authorization_url('https://diycrate.com:8080/')
+        webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
+    else:
+        start_manual_synching()
     notifier.start()
     # notifier_thread = threading.Thread(target=notifier.loop)
     # notifier_thread.daemon = True
     # notifier_thread.start()
-    bottle_app.run(server=SSLCherryPyServer)
+    if not r_c.exists('diy_crate.auth.access_token') and not r_c.exists('diy_crate.auth.refresh_token'):
+        bottle_app.run(server=SSLCherryPyServer)
