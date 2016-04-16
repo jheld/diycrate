@@ -713,7 +713,14 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
                 local_path = os.path.join(path, box_item['name'])
                 if not os.path.isdir(local_path):
                     os.mkdir(local_path)
-                walk_and_notify_and_download_tree(local_path, client.folder(folder_id=box_item['id']).get(), client)
+                try:
+                    walk_and_notify_and_download_tree(local_path,
+                                                      client.folder(folder_id=box_item['id']).get(), client)
+                except BoxAPIException as e:
+                    print(traceback.format_exc())
+                    if e.status == 404:
+                        print('Box says: {}, {}, is a 404 status.'.format(box_item['id'], box_item['name']))
+                        print('But, this is a folder, we do not handle recursive folder deletes correctly yet.')
             else:
                 try:
                     file_obj = box_item
