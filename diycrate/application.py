@@ -102,6 +102,7 @@ def upload_queue_processor():
     while True:
         if upload_queue.not_empty:
             callable_up = upload_queue.get()  # blocks
+            # TODO: pass in the actual item being updated/uploaded, so we can do more intelligent retry mechanisms
             was_list = isinstance(callable_up, list)
             last_modified_time = None
             if was_list:
@@ -123,7 +124,13 @@ def upload_queue_processor():
                             # version_info[file_obj['id']]['etag'] = file_obj['etag']
                             redis_set(file_obj, last_modified_time)
                     break
-                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
+                except BoxAPIException as e:
+                    print(traceback.format_exc())
+                    if e.status == 409:
+                        print('Apparently Box says this item already exists...'
+                              'and we were trying to create it. Need to handle this better')
+                        break
+                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     time.sleep(3)
                     print(traceback.format_exc())
                     if x >= num_retries - 1:
@@ -511,7 +518,7 @@ class EventHandler(pyinotify.ProcessEvent):
                             can_update = True
                             was_versioned = r_c.exists(redis_key(cur_file['id']))
                             try:
-                                info = redis_get(cur_file)
+                                info = redis_get(cur_file) if was_versioned else None
                                 info = info if was_versioned else {'fresh_download': True,
                                                                    'etag': '0', 'time_stamp': 0}
                                 item_version = info
