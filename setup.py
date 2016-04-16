@@ -27,7 +27,7 @@ setup(
         "License :: OSI Approved :: MIT License",
         'Intended Audience :: End Users/Desktop',
         'Intended Audience :: Developers',
-        'Operating System :: Linux',
+        'Operating System :: POSIX :: Linux',
         'Environment :: Console',
         'Environment :: Web Environment',
         'Intended Audience :: End Users/Desktop',
