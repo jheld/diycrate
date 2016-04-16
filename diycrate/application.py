@@ -70,7 +70,7 @@ def redis_set(obj, last_modified_time, fresh_download=False, folder=None):
     if folder:
         path = folder
     elif int(obj['path_collection']['total_count']) > 1:
-        path = '{}'.format(os.path.pathsep).join([folder['name']
+        path = '{}'.format(os.path.sep).join([folder['name']
                                                   for folder in
                                                   obj['path_collection']['entries'][1:]])
     else:
@@ -758,7 +758,7 @@ def long_poll_event_listener():
                     obj_type = event['source']['type']
                     if obj_type == 'file':
                         if int(event['source']['path_collection']['total_count']) > 1:
-                            path = '{}'.format(os.path.pathsep).join([folder['name']
+                            path = '{}'.format(os.path.sep).join([folder['name']
                                                                       for folder in
                                                                       event['source']['path_collection']['entries'][
                                                                       1:]])
@@ -782,7 +782,7 @@ def long_poll_event_listener():
                     obj_type = event['source']['type']
                     if obj_type == 'file':
                         if int(event['source']['path_collection']['total_count']) > 1:
-                            path = '{}'.format(os.path.pathsep).join([folder['name']
+                            path = '{}'.format(os.path.sep).join([folder['name']
                                                                       for folder in
                                                                       event['source']['path_collection']['entries'][
                                                                       1:]])
@@ -796,7 +796,7 @@ def long_poll_event_listener():
                         # was_versioned = r_c.exists(redis_key(obj_id))
                         # if not was_versioned:
                         #     if int(event['source']['path_collection']['total_count']) > 1:
-                        #         path = '{}'.format(os.path.pathsep).join([folder['name']
+                        #         path = '{}'.format(os.path.sep).join([folder['name']
                         #                                                   for folder in
                         #                                                   event['source']['path_collection']['entries'][1:]])
                         #     else:
@@ -816,7 +816,7 @@ def long_poll_event_listener():
                     obj_type = event['source']['type']
                     if obj_type == 'file':
                         if int(event['source']['path_collection']['total_count']) > 1:
-                            path = '{}'.format(os.path.pathsep).join([folder['name']
+                            path = '{}'.format(os.path.sep).join([folder['name']
                                                                       for folder in
                                                                       event['source']['path_collection']['entries'][
                                                                       1:]])
