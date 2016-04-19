@@ -748,6 +748,13 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
 
 
 def re_walk(path, box_folder, client):
+    """
+
+    :param path:
+    :param box_folder:
+    :param client:
+    :return:
+    """
     while True:
         walk_and_notify_and_download_tree(path, box_folder, client)
         time.sleep(3600)  # once an hour we walk the tree
@@ -867,6 +874,10 @@ def oauth_handler():
 
 
 def start_manual_synching():
+    """
+
+    :return:
+    """
     client = Client(oauth)
     wm.add_watch(BOX_DIR, mask, rec=False)
     box_folder = client.folder(folder_id='0').get()
