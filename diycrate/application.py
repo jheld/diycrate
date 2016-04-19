@@ -868,12 +868,12 @@ def oauth_handler():
     """
     assert csrf_token == bottle.request.GET['state']
     access_token, refresh_token = oauth.authenticate(bottle.request.GET['code'])
-    start_manual_synching()
+    start_cloud_threads()
 
     return 'OK'
 
 
-def start_manual_synching():
+def start_cloud_threads():
     """
 
     :return:
@@ -967,7 +967,7 @@ if __name__ == '__main__':
         auth_url, csrf_token = oauth.get_authorization_url('https://localhost:8080/')
         webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
     else:
-        start_manual_synching()
+        start_cloud_threads()
     notifier.start()
     # notifier_thread = threading.Thread(target=notifier.loop)
     # notifier_thread.daemon = True
