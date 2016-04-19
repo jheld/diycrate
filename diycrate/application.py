@@ -1,6 +1,7 @@
 import argparse
 import configparser
 import os
+import subprocess
 import json
 import queue
 import threading
@@ -47,6 +48,17 @@ upload_queue = queue.Queue()
 uploads_given_up_on = []
 
 r_c = redis.StrictRedis()
+
+
+def notify_user_with_gui(message):
+    """
+    Sends the message to the user
+    :param message:
+    :return:
+    """
+    proc = subprocess.Popen(['notify-send', message])
+    if proc.returncode:
+        print('Tried sending a message to user, return code: {}'.format(proc.returncode))
 
 
 def redis_key(key):
@@ -848,6 +860,7 @@ def long_poll_event_listener():
                             os.unlink(file_path)
                         if r_c.exists(redis_key(obj_id)):
                             r_c.delete(redis_key(obj_id))
+                        notify_user_with_gui('Box message: Deleted {}'.format(file_path))
                 elif event['event_type'] == 'ITEM_DOWNLOAD':
                     pass
         except Exception:
