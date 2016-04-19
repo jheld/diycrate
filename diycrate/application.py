@@ -162,6 +162,8 @@ def download_queue_processor():
                 if not info or info['etag'] != item['etag'] or not os.path.exists(path):
                     try:
                         for i in range(15):
+                            if os.path.basename(path).startswith('.~lock'):  # avoid downloading lock files
+                                break
                             with open(path, 'wb') as item_handler:
                                 print('About to download: ', item['name'], item['id'])
                                 item.download_to(item_handler)
@@ -612,7 +614,8 @@ class EventHandler(pyinotify.ProcessEvent):
         :param event:
         :return:
         """
-        self.operations.append([event, 'create'])
+        if not event.name.startswith('.~lock'):  # avoid propagating lock files
+            self.operations.append([event, 'create'])
 
     def process_IN_DELETE(self, event):
         """
@@ -628,7 +631,8 @@ class EventHandler(pyinotify.ProcessEvent):
         :param event:
         :return:
         """
-        self.operations.append([event, 'close'])
+        if not event.name.startswith('.~lock'):  # avoid propagating lock files
+            self.operations.append([event, 'close'])
 
     def process_IN_MOVED_FROM(self, event):
         """
@@ -636,8 +640,9 @@ class EventHandler(pyinotify.ProcessEvent):
         :param event:
         :return:
         """
-        print("Moved from:", event.pathname)
-        self.move_events.append(event)
+        if not event.name.startswith('.~lock'):  # avoid propagating lock files
+            print("Moved from:", event.pathname)
+            self.move_events.append(event)
 
     def process_IN_MOVED_TO(self, event):
         """
@@ -656,11 +661,12 @@ class EventHandler(pyinotify.ProcessEvent):
                 break
         if not found_from:
             self.operations.append([event, 'close'])  # "close"/"modify" seems appropriate
-        print("Moved to:", event.pathname)
+        print("Moved to:", event.pathname)  # allow moving from a ~.lock file...i guess that may be okay
 
     def process_IN_CLOSE(self, event):
-        print('Had a close on:', event)
-        self.operations.append([event, 'real_close'])
+        if not event.name.startswith('.~lock'):  # avoid propagating lock files
+            print('Had a close on:', event)
+            self.operations.append([event, 'real_close'])
 
 
 handler = EventHandler()
