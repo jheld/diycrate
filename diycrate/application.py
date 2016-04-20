@@ -1,9 +1,9 @@
 import argparse
 import configparser
-import os
-import subprocess
 import json
+import os
 import queue
+import subprocess
 import threading
 import time
 import traceback
@@ -16,11 +16,14 @@ import redis
 from bottle import ServerAdapter
 from boxsdk import OAuth2, Client
 from boxsdk.exception import BoxAPIException
-from boxsdk.object.folder import File
 from cherrypy import wsgiserver
 from cherrypy.wsgiserver import ssl_builtin
 from requests.exceptions import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
+
+from diycrate.cache_utils import redis_key, redis_get
+from diycrate.item_queue_io import upload_queue_processor, download_queue_processor
+from diycrate.path_utils import re_walk
 
 cloud_provider_name = 'Box'
 
@@ -59,140 +62,6 @@ def notify_user_with_gui(message):
     proc = subprocess.Popen(['notify-send', message])
     if proc.returncode:
         print('Tried sending a message to user, return code: {}'.format(proc.returncode))
-
-
-def redis_key(key):
-    """
-
-    :param key:
-    :return:
-    """
-    return 'diy_crate.version.{}'.format(key)
-
-
-def redis_set(obj, last_modified_time, fresh_download=False, folder=None):
-    """
-
-    :param obj:
-    :param last_modified_time:
-    :param fresh_download:
-    :return:
-    """
-    key = redis_key(obj['id'])
-    if folder:
-        path = folder
-    elif int(obj['path_collection']['total_count']) > 1:
-        path = '{}'.format(os.path.sep).join([folder['name']
-                                                  for folder in
-                                                  obj['path_collection']['entries'][1:]])
-    else:
-        path = ''
-    path = os.path.join(BOX_DIR, path)
-    r_c.set(key, json.dumps({'fresh_download': fresh_download,
-                             'time_stamp': last_modified_time,
-                             'etag': obj['etag'],
-                             'file_path': os.path.join(path, obj['name'])}))
-    r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
-    # assert redis_get(obj)
-
-
-def redis_get(obj):
-    """
-
-    :param obj:
-    :return:
-    """
-    key = redis_key(obj['id'])
-    return json.loads(str(r_c.get(key), encoding='utf-8', errors='strict'))
-
-
-def upload_queue_processor():
-    """
-    Implements a simple re-try mechanism for pending uploads
-    :return:
-    """
-    while True:
-        if upload_queue.not_empty:
-            callable_up = upload_queue.get()  # blocks
-            # TODO: pass in the actual item being updated/uploaded, so we can do more intelligent retry mechanisms
-            was_list = isinstance(callable_up, list)
-            last_modified_time = None
-            if was_list:
-                last_modified_time, callable_up = callable_up
-            args = callable_up.args if isinstance(callable_up, partial) else None
-            num_retries = 15
-            for x in range(15):
-                try:
-                    ret_val = callable_up()
-                    if was_list:
-                        item = ret_val  # is the new/updated item
-                        if isinstance(item, File):
-                            client = Client(oauth)
-                            file_obj = client.file(file_id=item.object_id).get()
-                            redis_set(file_obj, last_modified_time)
-                    break
-                except BoxAPIException as e:
-                    print(args, traceback.format_exc())
-                    if e.status == 409:
-                        print('Apparently Box says this item already exists...'
-                              'and we were trying to create it. Need to handle this better')
-                        break
-                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
-                    time.sleep(3)
-                    print(args, traceback.format_exc())
-                    if x >= num_retries - 1:
-                        print('Upload giving up on: {}'.format(callable_up))
-                        # no immediate plans to do anything with this info, yet.
-                        uploads_given_up_on.append(callable_up)
-                except (TypeError, FileNotFoundError) as e:
-                    print(traceback.format_exc())
-                    break
-            upload_queue.task_done()
-
-
-def download_queue_processor():
-    """
-    Implements a simple re-try mechanism for pending downloads
-    :return:
-    """
-    while True:
-        if download_queue.not_empty:
-            item, path = download_queue.get()  # blocks
-            if item['type'] == 'file':
-                info = redis_get(item) if r_c.exists(redis_key(item['id'])) else None
-                client = Client(oauth)
-                # hack because we did not use to store the file_path, but do not want to force a download
-                if info and 'file_path' not in info:
-                    info['file_path'] = path
-                    r_c.set(redis_key(item['id']), json.dumps(info))
-                # no version, or diff version, or the file does not exist locally
-                if not info or info['etag'] != item['etag'] or not os.path.exists(path):
-                    try:
-                        for i in range(15):
-                            if os.path.basename(path).startswith('.~lock'):  # avoid downloading lock files
-                                break
-                            with open(path, 'wb') as item_handler:
-                                print('About to download: ', item['name'], item['id'])
-                                item.download_to(item_handler)
-                                path_to_add = os.path.dirname(path)
-                                wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
-                            was_versioned = r_c.exists(redis_key(item['id']))
-                            #
-                            # version_info[item['id']] = version_info.get(item['id'], {'etag': item['etag'],
-                            #                                                          'fresh_download': True,
-                            #                                                          'time_stamp': time.time()})
-                            # version_info[item['id']]['etag'] = item['etag']
-                            # version_info[item['id']]['fresh_download'] = not was_versioned
-                            # version_info[item['id']]['time_stamp'] = os.path.getmtime(path)  # duh...since we have it!
-                            redis_set(item, os.path.getmtime(path), fresh_download=not was_versioned,
-                                      folder=os.path.dirname(path))
-                            break
-                    except (ConnectionResetError, ConnectionError):
-                        print(traceback.format_exc())
-                        time.sleep(5)
-                download_queue.task_done()
-            else:
-                download_queue.task_done()
 
 
 download_thread = threading.Thread(target=download_queue_processor)
@@ -695,78 +564,6 @@ def store_tokens_callback(access_token, refresh_token):
     r_c.set('diy_crate.auth.refresh_token', refresh_token)
 
 
-# def walk_and_notify_tree(path):
-#     if os.path.isdir(path):
-#         wm.add_watch(path, mask, rec=True)
-#     for _, dirs, _ in os.scandir(path):
-#         for a_dir in dirs:
-#             walk_and_notify_tree(os.path.join(path, a_dir))
-
-def walk_and_notify_and_download_tree(path, box_folder, client):
-    """
-    Walk the path recursively and add watcher and create the path.
-    :param path:
-    :param box_folder:
-    :param client:
-    :return:
-    """
-    if os.path.isdir(path):
-        wm.add_watch(path, mask, rec=True, auto_add=True)
-        local_files = os.listdir(path)
-    b_folder = client.folder(folder_id=box_folder['id']).get()
-    num_entries_in_folder = b_folder['item_collection']['total_count']
-    limit = 100
-    for offset in range(0, num_entries_in_folder, limit):
-        for box_item in b_folder.get_items(limit=limit, offset=offset):
-            if box_item['name'] in local_files:
-                local_files.remove(box_item['name'])
-    for local_file in local_files:  # prioritize the local_files not yet on box's server.
-        cur_box_folder = b_folder
-        local_path = os.path.join(path, local_file)
-        if os.path.isfile(local_path):
-            upload_queue.put([os.path.getmtime(local_path), partial(cur_box_folder.upload, local_path, local_file)])
-    for offset in range(0, num_entries_in_folder, limit):
-        for box_item in b_folder.get_items(limit=limit, offset=offset):
-            if box_item['name'] in local_files:
-                local_files.remove(box_item['name'])
-            if box_item['type'] == 'folder':
-                local_path = os.path.join(path, box_item['name'])
-                if not os.path.isdir(local_path):
-                    os.mkdir(local_path)
-                try:
-                    walk_and_notify_and_download_tree(local_path,
-                                                      client.folder(folder_id=box_item['id']).get(), client)
-                except BoxAPIException as e:
-                    print(traceback.format_exc())
-                    if e.status == 404:
-                        print('Box says: {}, {}, is a 404 status.'.format(box_item['id'], box_item['name']))
-                        print('But, this is a folder, we do not handle recursive folder deletes correctly yet.')
-            else:
-                try:
-                    file_obj = box_item
-                    download_queue.put((file_obj, os.path.join(path, box_item['name'])))
-                except BoxAPIException as e:
-                    print(traceback.format_exc())
-                    if e.status == 404:
-                        print('Box says: {}, {}, is a 404 status.'.format(box_item['id'], box_item['name']))
-                        if r_c.exists(redis_key(box_item['id'])):
-                            print('Deleting {}, {}'.format(box_item['id'], box_item['name']))
-                            r_c.delete(redis_key(box_item['id']))
-
-
-def re_walk(path, box_folder, client):
-    """
-
-    :param path:
-    :param box_folder:
-    :param client:
-    :return:
-    """
-    while True:
-        walk_and_notify_and_download_tree(path, box_folder, client)
-        time.sleep(3600)  # once an hour we walk the tree
-
-
 def long_poll_event_listener():
     """
 
@@ -786,9 +583,9 @@ def long_poll_event_listener():
                     if obj_type == 'file':
                         if int(event['source']['path_collection']['total_count']) > 1:
                             path = '{}'.format(os.path.sep).join([folder['name']
-                                                                      for folder in
-                                                                      event['source']['path_collection']['entries'][
-                                                                      1:]])
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][
+                                                                  1:]])
                         else:
                             path = ''
                         path = os.path.join(BOX_DIR, path)
@@ -810,9 +607,9 @@ def long_poll_event_listener():
                     if obj_type == 'file':
                         if int(event['source']['path_collection']['total_count']) > 1:
                             path = '{}'.format(os.path.sep).join([folder['name']
-                                                                      for folder in
-                                                                      event['source']['path_collection']['entries'][
-                                                                      1:]])
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][
+                                                                  1:]])
                         else:
                             path = ''
                         path = os.path.join(BOX_DIR, path)
@@ -844,9 +641,9 @@ def long_poll_event_listener():
                     if obj_type == 'file':
                         if int(event['source']['path_collection']['total_count']) > 1:
                             path = '{}'.format(os.path.sep).join([folder['name']
-                                                                      for folder in
-                                                                      event['source']['path_collection']['entries'][
-                                                                      1:]])
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][
+                                                                  1:]])
                         else:
                             path = ''
                         path = os.path.join(BOX_DIR, path)
