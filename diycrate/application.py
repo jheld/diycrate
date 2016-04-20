@@ -108,7 +108,7 @@ def redis_get(obj):
 
 def upload_queue_processor():
     """
-
+    Implements a simple re-try mechanism for pending uploads
     :return:
     """
     while True:
@@ -152,7 +152,7 @@ def upload_queue_processor():
 
 def download_queue_processor():
     """
-
+    Implements a simple re-try mechanism for pending downloads
     :return:
     """
     while True:
