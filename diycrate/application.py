@@ -566,7 +566,7 @@ def store_tokens_callback(access_token, refresh_token):
 
 def long_poll_event_listener():
     """
-
+    Receive and process remote cloud item events in real-time
     :return:
     """
     client = Client(oauth=oauth)
