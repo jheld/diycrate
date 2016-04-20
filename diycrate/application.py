@@ -119,6 +119,7 @@ def upload_queue_processor():
             last_modified_time = None
             if was_list:
                 last_modified_time, callable_up = callable_up
+            args = callable_up.args if isinstance(callable_up, partial) else None
             num_retries = 15
             for x in range(15):
                 try:
@@ -128,23 +129,17 @@ def upload_queue_processor():
                         if isinstance(item, File):
                             client = Client(oauth)
                             file_obj = client.file(file_id=item.object_id).get()
-                            # version_info[item.object_id] = version_info.get(file_obj['id'],
-                            #                                                 {'fresh_download': True,
-                            #                                                  'time_stamp': 0, 'etag': '0'})
-                            # version_info[file_obj['id']]['fresh_download'] = False
-                            # version_info[file_obj['id']]['time_stamp'] = last_modified_time
-                            # version_info[file_obj['id']]['etag'] = file_obj['etag']
                             redis_set(file_obj, last_modified_time)
                     break
                 except BoxAPIException as e:
-                    print(traceback.format_exc())
+                    print(args, traceback.format_exc())
                     if e.status == 409:
                         print('Apparently Box says this item already exists...'
                               'and we were trying to create it. Need to handle this better')
                         break
                 except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     time.sleep(3)
-                    print(traceback.format_exc())
+                    print(args, traceback.format_exc())
                     if x >= num_retries - 1:
                         print('Upload giving up on: {}'.format(callable_up))
                         # no immediate plans to do anything with this info, yet.
