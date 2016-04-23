@@ -2,7 +2,7 @@ import json
 import os
 import time
 
-from diycrate.application import BOX_DIR, r_c
+import redis
 
 
 def redis_key(key):
@@ -14,9 +14,10 @@ def redis_key(key):
     return 'diy_crate.version.{}'.format(key)
 
 
-def redis_set(obj, last_modified_time, fresh_download=False, folder=None):
+def redis_set(r_c, obj, last_modified_time, BOX_DIR, fresh_download=False, folder=None):
     """
 
+    :param r_c:
     :param obj:
     :param last_modified_time:
     :param fresh_download:
@@ -40,11 +41,15 @@ def redis_set(obj, last_modified_time, fresh_download=False, folder=None):
     # assert redis_get(obj)
 
 
-def redis_get(obj):
+def redis_get(r_c, obj):
     """
 
+    :param r_c:
     :param obj:
     :return:
     """
     key = redis_key(obj['id'])
     return json.loads(str(r_c.get(key), encoding='utf-8', errors='strict'))
+
+
+r_c = redis.StrictRedis()

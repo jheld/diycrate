@@ -5,8 +5,9 @@ from functools import partial
 
 from boxsdk.exception import BoxAPIException
 
-from diycrate.application import wm, mask, upload_queue, download_queue, r_c
-from diycrate.cache_utils import redis_key
+from diycrate.file_operations import wm, mask
+from diycrate.item_queue_io import download_queue, upload_queue
+from diycrate.cache_utils import redis_key, r_c
 
 
 def walk_and_notify_and_download_tree(path, box_folder, client):
@@ -31,7 +32,8 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
         cur_box_folder = b_folder
         local_path = os.path.join(path, local_file)
         if os.path.isfile(local_path):
-            upload_queue.put([os.path.getmtime(local_path), partial(cur_box_folder.upload, local_path, local_file)])
+            upload_queue.put([os.path.getmtime(local_path), partial(cur_box_folder.upload, local_path, local_file),
+                              client._oauth])
     for offset in range(0, num_entries_in_folder, limit):
         for box_item in b_folder.get_items(limit=limit, offset=offset):
             if box_item['name'] in local_files:
@@ -51,7 +53,7 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
             else:
                 try:
                     file_obj = box_item
-                    download_queue.put((file_obj, os.path.join(path, box_item['name'])))
+                    download_queue.put((file_obj, os.path.join(path, box_item['name']), client._oauth))
                 except BoxAPIException as e:
                     print(traceback.format_exc())
                     if e.status == 404:

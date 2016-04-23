@@ -1,5 +1,7 @@
+import configparser
 import json
 import os
+import queue
 import time
 import traceback
 from functools import partial
@@ -10,9 +12,9 @@ from boxsdk.object.file import File
 from requests import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
-from diycrate.application import upload_queue, oauth, redis_set, uploads_given_up_on, download_queue, redis_get, r_c, \
-    wm, mask
-from diycrate.cache_utils import redis_key, redis_set, redis_get
+from diycrate.oauth_utils import setup_oauth, store_tokens_callback
+from diycrate.file_operations import wm, mask
+from diycrate.cache_utils import redis_key, redis_set, redis_get, r_c
 
 
 def upload_queue_processor():
@@ -27,7 +29,7 @@ def upload_queue_processor():
             was_list = isinstance(callable_up, list)
             last_modified_time = None
             if was_list:
-                last_modified_time, callable_up = callable_up
+                last_modified_time, callable_up, oauth = callable_up
             args = callable_up.args if isinstance(callable_up, partial) else None
             num_retries = 15
             for x in range(15):
@@ -38,7 +40,7 @@ def upload_queue_processor():
                         if isinstance(item, File):
                             client = Client(oauth)
                             file_obj = client.file(file_id=item.object_id).get()
-                            redis_set(file_obj, last_modified_time)
+                            redis_set(r_c, file_obj, last_modified_time, BOX_DIR=BOX_DIR)
                     break
                 except BoxAPIException as e:
                     print(args, traceback.format_exc())
@@ -66,9 +68,9 @@ def download_queue_processor():
     """
     while True:
         if download_queue.not_empty:
-            item, path = download_queue.get()  # blocks
+            item, path, oauth = download_queue.get()  # blocks
             if item['type'] == 'file':
-                info = redis_get(item) if r_c.exists(redis_key(item['id'])) else None
+                info = redis_get(r_c, item) if r_c.exists(redis_key(item['id'])) else None
                 client = Client(oauth)
                 # hack because we did not use to store the file_path, but do not want to force a download
                 if info and 'file_path' not in info:
@@ -80,11 +82,18 @@ def download_queue_processor():
                         for i in range(15):
                             if os.path.basename(path).startswith('.~lock'):  # avoid downloading lock files
                                 break
-                            with open(path, 'wb') as item_handler:
-                                print('About to download: ', item['name'], item['id'])
-                                item.download_to(item_handler)
-                                path_to_add = os.path.dirname(path)
-                                wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
+                            try:
+                                with open(path, 'wb') as item_handler:
+                                    print('About to download: ', item['name'], item['id'])
+                                    item.download_to(item_handler)
+                                    path_to_add = os.path.dirname(path)
+                                    wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
+                            except BoxAPIException as e:
+                                print(traceback.format_exc())
+                                if e.status == 404:
+                                    print('Apparently item: {}, {} has been deleted, '
+                                          'right before we tried to download'.format(item['id'], path))
+                                break
                             was_versioned = r_c.exists(redis_key(item['id']))
                             #
                             # version_info[item['id']] = version_info.get(item['id'], {'etag': item['etag'],
@@ -93,8 +102,8 @@ def download_queue_processor():
                             # version_info[item['id']]['etag'] = item['etag']
                             # version_info[item['id']]['fresh_download'] = not was_versioned
                             # version_info[item['id']]['time_stamp'] = os.path.getmtime(path)  # duh...since we have it!
-                            redis_set(item, os.path.getmtime(path), fresh_download=not was_versioned,
-                                      folder=os.path.dirname(path))
+                            redis_set(r_c, item, os.path.getmtime(path), fresh_download=not was_versioned,
+                                      folder=os.path.dirname(path), BOX_DIR=BOX_DIR)
                             break
                     except (ConnectionResetError, ConnectionError):
                         print(traceback.format_exc())
@@ -102,3 +111,44 @@ def download_queue_processor():
                 download_queue.task_done()
             else:
                 download_queue.task_done()
+
+
+def download_queue_monitor():
+    """
+
+    :return:
+    """
+    while True:
+        time.sleep(10)
+        if download_queue.not_empty:
+            print('Download queue size:', download_queue.qsize())
+        else:
+            print('Download queue is empty.')
+
+
+def upload_queue_monitor():
+    """
+
+    :return:
+    """
+    while True:
+        time.sleep(10)
+        if upload_queue.not_empty:
+            print('Upload queue size:', upload_queue.qsize())
+        else:
+            print('Upload queue is empty.')
+
+
+download_queue = queue.Queue()
+upload_queue = queue.Queue()
+uploads_given_up_on = []
+
+conf_obj = configparser.ConfigParser()
+conf_dir = os.path.abspath(os.path.expanduser('~/.config/diycrate'))
+if not os.path.isdir(conf_dir):
+    os.mkdir(conf_dir)
+cloud_credentials_file_path = os.path.join(conf_dir, 'box.ini')
+if not os.path.isfile(cloud_credentials_file_path):
+    open(cloud_credentials_file_path, 'w').write('')
+conf_obj.read(cloud_credentials_file_path)
+BOX_DIR = os.path.expanduser(conf_obj['box']['directory'])
