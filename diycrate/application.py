@@ -143,6 +143,9 @@ def long_poll_event_listener():
                     obj_id = event['source']['id']
                     obj_type = event['source']['type']
                     if obj_type == 'file':
+                        item_info = r_c.get(redis_key(obj_id))
+                        if item_info:
+                            item_info = json.loads(str(item_info, encoding='utf-8', errors='strict'))
                         if int(event['source']['path_collection']['total_count']) > 1:
                             path = '{}'.format(os.path.sep).join([folder['name']
                                                                   for folder in
@@ -151,11 +154,13 @@ def long_poll_event_listener():
                         else:
                             path = ''
                         path = os.path.join(BOX_DIR, path)
-                        file_path = os.path.join(path, event['source']['name'])
+                        file_path = os.path.join(path, event['source']['name']) if not item_info else item_info[
+                            'file_path']
                         if os.path.exists(file_path):
                             os.unlink(file_path)
                         if r_c.exists(redis_key(obj_id)):
                             r_c.delete(redis_key(obj_id))
+                            r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
                         notify_user_with_gui('Box message: Deleted {}'.format(file_path))
                 elif event['event_type'] == 'ITEM_DOWNLOAD':
                     pass
