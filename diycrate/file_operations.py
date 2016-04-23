@@ -209,7 +209,11 @@ class EventHandler(pyinotify.ProcessEvent):
                                     did_find_cur_file = is_file and matching_name and isinstance(cur_entry, File)
                                     did_find_cur_folder = is_dir and matching_name and isinstance(cur_entry, Folder)
                                     if did_find_cur_file:
-                                        cur_entry.update_contents(file_path=dest_event.pathname)
+                                        self.upload_queue.put([os.path.getmtime(dest_event.pathname),
+                                                               partial(cur_entry.update_contents,
+                                                                       dest_event.pathname),
+                                                               self.oauth])
+                                        self.upload_queue.put(partial(src_file.delete))
                                         break
                                     elif did_find_cur_folder:
                                         print('do not currently support movinga same name folder into parent with'
