@@ -76,6 +76,7 @@ def download_queue_processor():
                 if info and 'file_path' not in info:
                     info['file_path'] = path
                     r_c.set(redis_key(item['id']), json.dumps(info))
+                    r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
                 # no version, or diff version, or the file does not exist locally
                 if not info or info['etag'] != item['etag'] or not os.path.exists(path):
                     try:

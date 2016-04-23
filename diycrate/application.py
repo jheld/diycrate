@@ -9,6 +9,7 @@ import webbrowser
 
 import bottle
 import pyinotify
+import time
 from bottle import ServerAdapter
 from boxsdk import Client
 from cherrypy import wsgiserver
@@ -100,6 +101,7 @@ def long_poll_event_listener():
                             version_info['file_path'] = file_path
                             version_info['etag'] = file_obj['etag']
                             r_c.set(redis_key(obj_id), json.dumps(version_info))
+                            r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
                         else:
                             download_queue.put([file_obj, file_path, client._oauth])
                 elif event['event_type'] == 'ITEM_UPLOAD':
