@@ -8,6 +8,8 @@ from functools import partial
 import pyinotify
 from boxsdk import Client
 from boxsdk.exception import BoxAPIException
+from boxsdk.object.file import File
+from boxsdk.object.folder import Folder
 from requests import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
@@ -15,7 +17,6 @@ from diycrate.oauth_utils import setup_oauth, store_tokens_callback
 from diycrate.cache_utils import redis_key, redis_get, r_c
 
 trash_directory = os.path.expanduser('~/.local/share/Trash/files')
-
 
 conf_obj = configparser.ConfigParser()
 conf_dir = os.path.abspath(os.path.expanduser('~/.config/diycrate'))
@@ -199,9 +200,28 @@ class EventHandler(pyinotify.ProcessEvent):
                         if is_rename:
                             src_file.rename(dest_event.name)
                         else:
-                            src_file.move(cur_box_folder)
-                            # do not yet support moving and renaming in one go
-                            assert src_file['name'] == dest_event.name
+                            did_find_cur_file = os.path.isdir(dest_event.pathname)  # should check box instead
+                            did_find_cur_folder = os.path.isfile(dest_event.pathname)  # should check box instead
+                            cur_num_entries = cur_box_folder['item_collection']['total_count']
+                            for cur_offset in range(0, cur_num_entries, limit):
+                                for cur_entry in cur_box_folder.get_items(offset=cur_offset, limit=limit):
+                                    matching_name = cur_entry['name'] == dest_event.name
+                                    did_find_cur_file = is_file and matching_name and isinstance(cur_entry, File)
+                                    did_find_cur_folder = is_dir and matching_name and isinstance(cur_entry, Folder)
+                                    if did_find_cur_file:
+                                        cur_entry.update_contents(file_path=dest_event.pathname)
+                                        break
+                                    elif did_find_cur_folder:
+                                        print('do not currently support movinga same name folder into parent with'
+                                              'folder inside of the same name -- would may need to update the '
+                                              'contents')
+                                        break
+                                if (is_file and did_find_cur_file) or (is_dir and did_find_cur_folder):
+                                    break
+                            if is_file and not did_find_cur_file:
+                                src_file.move(cur_box_folder)
+                                # do not yet support moving and renaming in one go
+                                assert src_file['name'] == dest_event.name
                     elif did_find_src_folder:
                         src_folder = client.folder(folder_id=entry['id']).get()
                         if is_rename:
@@ -228,7 +248,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         # src file [should] no longer exist[s]. this file did not originate in box, too.
                         last_modified_time = os.path.getmtime(dest_event.pathname)
                         self.upload_queue.put([last_modified_time,
-                                          partial(cur_box_folder.upload, dest_event.pathname, dest_event.name),
+                                               partial(cur_box_folder.upload, dest_event.pathname, dest_event.name),
                                                self.oauth])
                     elif is_dir and not did_find_src_folder:
                         self.upload_queue.put(partial(cur_box_folder.create_subfolder, dest_event.name))
@@ -335,7 +355,7 @@ class EventHandler(pyinotify.ProcessEvent):
                                     can_update = False
                                 if can_update:
                                     self.upload_queue.put([last_modified_time,
-                                                      partial(cur_file.update_contents, event.pathname),
+                                                           partial(cur_file.update_contents, event.pathname),
                                                            self.oauth])
                                 else:
                                     print('Skipping the update because not versioned: {}, '
@@ -365,7 +385,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 print('Uploading contents...', event.pathname)
                 last_modified_time = os.path.getmtime(event.pathname)
                 self.upload_queue.put([last_modified_time,
-                                  partial(cur_box_folder.upload, event.pathname, event.name),
+                                       partial(cur_box_folder.upload, event.pathname, event.name),
                                        self.oauth])
             if is_dir and not did_find_the_folder:
                 print('Creating a sub-folder...', event.pathname)
@@ -407,7 +427,7 @@ class EventHandler(pyinotify.ProcessEvent):
             if is_file and not did_find_the_file:
                 last_modified_time = os.path.getmtime(event.pathname)
                 self.upload_queue.put([last_modified_time,
-                                  partial(cur_box_folder.upload, event.pathname, event.name),
+                                       partial(cur_box_folder.upload, event.pathname, event.name),
                                        self.oauth])
             elif is_dir and not did_find_the_folder:
                 cur_box_folder.create_subfolder(event.name)
