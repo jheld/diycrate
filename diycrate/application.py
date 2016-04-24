@@ -171,7 +171,8 @@ def long_poll_event_listener():
 long_poll_thread = threading.Thread(target=long_poll_event_listener)
 long_poll_thread.daemon = True
 
-walk_thread = None
+walk_thread = threading.Thread(target=re_walk)
+walk_thread.daemon = True
 
 
 @bottle_app.route('/')
@@ -206,9 +207,7 @@ def start_cloud_threads(oauth):
     if not long_poll_thread.is_alive():  # start before doing anything else
         long_poll_thread.start()
     # walk_and_notify_and_download_tree(BOX_DIR, box_folder, client)
-    global walk_thread
-    walk_thread = threading.Thread(target=re_walk, args=(BOX_DIR, box_folder, client,))
-    walk_thread.daemon = True
+    walk_thread._args = (BOX_DIR, box_folder, client,)
     walk_thread.start()
 
 
