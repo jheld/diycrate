@@ -13,7 +13,6 @@ from boxsdk.object.folder import Folder
 from requests import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
-from diycrate.oauth_utils import setup_oauth, store_tokens_callback
 from diycrate.cache_utils import redis_key, redis_get, r_c
 
 trash_directory = os.path.expanduser('~/.local/share/Trash/files')

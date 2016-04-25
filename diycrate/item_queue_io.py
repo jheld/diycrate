@@ -12,7 +12,6 @@ from boxsdk.object.file import File
 from requests import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
-from diycrate.oauth_utils import setup_oauth, store_tokens_callback
 from diycrate.file_operations import wm, mask
 from diycrate.cache_utils import redis_key, redis_set, redis_get, r_c
 
