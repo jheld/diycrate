@@ -24,8 +24,6 @@ from diycrate.path_utils import re_walk
 
 cloud_provider_name = 'Box'
 
-csrf_token = ''
-
 bottle_app = bottle.Bottle()
 
 # The watch manager stores the watches and provides operations on watches
@@ -181,8 +179,9 @@ def oauth_handler():
     RESTful end-point for the oauth handling
     :return:
     """
-    assert csrf_token == bottle.request.GET['state']
+    assert bottle_app.csrf_token == bottle.request.GET['state']
     oauth = bottle_app.oauth
+    #  we actually store these values in redis as an explicit part of the callback, so we basically throw these away
     access_token, refresh_token = oauth.authenticate(bottle.request.GET['code'])
     start_cloud_threads(oauth)
 
@@ -273,9 +272,8 @@ if __name__ == '__main__':
     if not os.path.isdir(BOX_DIR):
         os.mkdir(BOX_DIR)
     if not r_c.exists('diy_crate.auth.access_token') and not r_c.exists('diy_crate.auth.refresh_token'):
-        oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
-        bottle_app.oauth = oauth
-        auth_url, csrf_token = oauth.get_authorization_url('https://localhost:8080/')
+        bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
+        auth_url, bottle_app.csrf_token = bottle_app.oauth.get_authorization_url('https://localhost:8080/')
         webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
     else:
         oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
