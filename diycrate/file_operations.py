@@ -481,17 +481,21 @@ class EventHandler(pyinotify.ProcessEvent):
         :return:
         """
         found_from = False
+        to_trash = os.path.commonprefix([trash_directory, event.pathname]) == trash_directory
+        to_box = os.path.commonprefix([BOX_DIR, event.pathname]) == BOX_DIR
         for move_event in self.move_events:
             if move_event.cookie == event.cookie and 'in_moved_from' in move_event.maskname.lower():
                 found_from = True
-                if os.path.commonprefix([trash_directory, event.pathname]) == trash_directory:
-                    self.operations.append([move_event, 'delete'])
+                if to_trash:
+                    # only count deletes that come from within the box path -- though this should always be the case
+                    if os.path.commonprefix([BOX_DIR, move_event.pathname]) == BOX_DIR:
+                        self.operations.append([move_event, 'delete'])
                 else:
                     self.operations.append([[move_event, event], 'move'])
                 break
-        if not found_from:
+        if not found_from and (not to_trash and to_box):
             self.operations.append([event, 'close'])  # "close"/"modify" seems appropriate
-        print("Moved to:", event.pathname)  # allow moving from a ~.lock file...i guess that may be okay
+            print("Moved to:", event.pathname)  # allow moving from a ~.lock file...i guess that may be okay
 
     def process_IN_CLOSE(self, event):
         if not event.name.startswith('.~lock'):  # avoid propagating lock files
