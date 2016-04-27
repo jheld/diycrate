@@ -95,7 +95,6 @@ def long_poll_event_listener():
                         src_file_path = None if not r_c.exists(redis_key(obj_id)) else redis_get(r_c, file_obj)['file_path']
                         if src_file_path and os.path.exists(src_file_path):
                             version_info = redis_get(r_c, obj=file_obj)
-                            src_file_path = version_info['file_path']
                             os.rename(src_file_path, file_path)
                             version_info['file_path'] = file_path
                             version_info['etag'] = file_obj['etag']
@@ -103,6 +102,27 @@ def long_poll_event_listener():
                             r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
                         else:
                             download_queue.put([file_obj, file_path, client._oauth])
+                    elif obj_type == 'folder':
+                        if int(event['source']['path_collection']['total_count']) > 1:
+                            path = '{}'.format(os.path.sep).join([folder['name']
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][
+                                                                  1:]])
+                        else:
+                            path = ''
+                        path = os.path.join(BOX_DIR, path)
+                        file_path = os.path.join(path, event['source']['name'])
+                        folder_obj = client.folder(folder_id=obj_id).get()
+                        src_file_path = None if not r_c.exists(redis_key(obj_id)) else redis_get(r_c, folder_obj)[
+                            'file_path']
+                        if src_file_path and os.path.exists(src_file_path):
+                            os.rename(src_file_path, file_path)
+                            version_info = redis_get(r_c, obj=folder_obj)
+                            src_file_path = version_info['file_path']
+                            version_info['file_path'] = file_path
+                            version_info['etag'] = folder_obj['etag']
+                            r_c.set(redis_key(obj_id), json.dumps(version_info))
+                            r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
                 elif event['event_type'] == 'ITEM_UPLOAD':
                     obj_id = event['source']['id']
                     obj_type = event['source']['type']

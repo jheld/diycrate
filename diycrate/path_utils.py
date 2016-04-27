@@ -5,9 +5,9 @@ from functools import partial
 
 from boxsdk.exception import BoxAPIException
 
-from diycrate.file_operations import wm, mask
+from diycrate.file_operations import wm, mask, BOX_DIR
 from diycrate.item_queue_io import download_queue, upload_queue
-from diycrate.cache_utils import redis_key, r_c
+from diycrate.cache_utils import redis_key, r_c, redis_set
 
 
 def walk_and_notify_and_download_tree(path, box_folder, client):
@@ -40,9 +40,13 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
                 local_files.remove(box_item['name'])
             if box_item['type'] == 'folder':
                 local_path = os.path.join(path, box_item['name'])
+                fresh_download = False
                 if not os.path.isdir(local_path):
                     os.mkdir(local_path)
+                    fresh_download = True
                 try:
+                    redis_set(r_c=r_c, obj=box_item, last_modified_time=os.path.getmtime(local_path),
+                              BOX_DIR=BOX_DIR, fresh_download=fresh_download, folder=os.path.dirname(local_path))
                     walk_and_notify_and_download_tree(local_path,
                                                       client.folder(folder_id=box_item['id']).get(), client)
                 except BoxAPIException as e:
