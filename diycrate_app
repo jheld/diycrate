@@ -3,10 +3,12 @@ import argparse
 import configparser
 import json
 import os
+import logging
 import subprocess
 import threading
 import traceback
 import webbrowser
+from logging import handlers
 
 import bottle
 import pyinotify
@@ -22,6 +24,18 @@ from diycrate.item_queue_io import upload_queue_processor, download_queue_proces
     upload_queue_monitor, download_queue, upload_queue
 from diycrate.oauth_utils import setup_oauth, store_tokens_callback
 from diycrate.path_utils import re_walk
+
+
+crate_logger = logging.getLogger('diy_crate_logger')
+crate_logger.setLevel(logging.DEBUG)
+
+l_handler = handlers.SysLogHandler(address='/dev/log')
+
+crate_logger.addHandler(l_handler)
+
+log_format = 'diycrate' + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'
+log_format = logging.Formatter(log_format)
+l_handler.setFormatter(log_format)
 
 cloud_provider_name = 'Box'
 
@@ -42,7 +56,7 @@ def notify_user_with_gui(message):
     """
     proc = subprocess.Popen(['notify-send', message])
     if proc.returncode:
-        print('Tried sending a message to user, return code: {}'.format(proc.returncode))
+        crate_logger.debug('Tried sending a message to user, return code: {}'.format(proc.returncode))
 
 
 download_thread = threading.Thread(target=download_queue_processor)
@@ -75,7 +89,7 @@ def long_poll_event_listener():
         try:
             stream_position = client.events().get_latest_stream_position()
             for event in client.events().generate_events_with_long_polling(stream_position=stream_position):
-                print(event, ' happened!')
+                crate_logger.debug('{} happened!'.format(json.dumps(event)))
                 if event.get('message', '').lower() == 'reconnect':
                     break
                 if event['event_type'] == 'ITEM_RENAME':
@@ -184,7 +198,7 @@ def long_poll_event_listener():
                 elif event['event_type'] == 'ITEM_DOWNLOAD':
                     pass
         except Exception:
-            print(traceback.format_exc())
+             crate_logger.debug(traceback.format_exc())
 
 
 long_poll_thread = threading.Thread(target=long_poll_event_listener)
