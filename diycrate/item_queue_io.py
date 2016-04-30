@@ -4,6 +4,8 @@ import os
 import queue
 import time
 import traceback
+import logging
+from logging import handlers
 from functools import partial
 
 from boxsdk import Client
@@ -14,6 +16,18 @@ from requests.packages.urllib3.exceptions import ProtocolError
 
 from diycrate.file_operations import wm, mask
 from diycrate.cache_utils import redis_key, redis_set, redis_get, r_c
+
+
+crate_logger = logging.getLogger('diy_crate_logger')
+crate_logger.setLevel(logging.DEBUG)
+
+l_handler = handlers.SysLogHandler(address='/dev/log')
+
+crate_logger.addHandler(l_handler)
+
+log_format = 'diycrate' + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'
+log_format = logging.Formatter(log_format)
+l_handler.setFormatter(log_format)
 
 
 def upload_queue_processor():
@@ -42,20 +56,20 @@ def upload_queue_processor():
                             redis_set(r_c, file_obj, last_modified_time, BOX_DIR=BOX_DIR)
                     break
                 except BoxAPIException as e:
-                    print(args, traceback.format_exc())
+                    crate_logger.debug('{}, {}'.format(args, traceback.format_exc()))
                     if e.status == 409:
-                        print('Apparently Box says this item already exists...'
+                        crate_logger.debug('Apparently Box says this item already exists...'
                               'and we were trying to create it. Need to handle this better')
                         break
                 except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     time.sleep(3)
-                    print(args, traceback.format_exc())
+                    crate_logger.debug('{}, {}'.format(args, traceback.format_exc()))
                     if x >= num_retries - 1:
-                        print('Upload giving up on: {}'.format(callable_up))
+                        crate_logger.debug('Upload giving up on: {}'.format(callable_up))
                         # no immediate plans to do anything with this info, yet.
                         uploads_given_up_on.append(callable_up)
                 except (TypeError, FileNotFoundError) as e:
-                    print(traceback.format_exc())
+                    crate_logger.debug(traceback.format_exc())
                     break
             upload_queue.task_done()
 
@@ -84,14 +98,14 @@ def download_queue_processor():
                                 break
                             try:
                                 with open(path, 'wb') as item_handler:
-                                    print('About to download: ', item['name'], item['id'])
+                                    crate_logger.debug('About to download: {}, {}'.format(item['name'], item['id']))
                                     item.download_to(item_handler)
                                     path_to_add = os.path.dirname(path)
                                     wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
                             except BoxAPIException as e:
-                                print(traceback.format_exc())
+                                crate_logger.debug(traceback.format_exc())
                                 if e.status == 404:
-                                    print('Apparently item: {}, {} has been deleted, '
+                                    crate_logger.debug('Apparently item: {}, {} has been deleted, '
                                           'right before we tried to download'.format(item['id'], path))
                                 break
                             was_versioned = r_c.exists(redis_key(item['id']))
@@ -106,7 +120,7 @@ def download_queue_processor():
                                       folder=os.path.dirname(path), BOX_DIR=BOX_DIR)
                             break
                     except (ConnectionResetError, ConnectionError):
-                        print(traceback.format_exc())
+                        crate_logger.debug(traceback.format_exc())
                         time.sleep(5)
                 download_queue.task_done()
             else:
@@ -121,9 +135,9 @@ def download_queue_monitor():
     while True:
         time.sleep(10)
         if download_queue.not_empty:
-            print('Download queue size:', download_queue.qsize())
+             crate_logger.debug('Download queue size: {}'.format(download_queue.qsize()))
         else:
-            print('Download queue is empty.')
+             crate_logger.debug('Download queue is empty.')
 
 
 def upload_queue_monitor():
@@ -134,9 +148,9 @@ def upload_queue_monitor():
     while True:
         time.sleep(10)
         if upload_queue.not_empty:
-            print('Upload queue size:', upload_queue.qsize())
+            crate_logger.debug('Upload queue size: {}'.format(upload_queue.qsize()))
         else:
-            print('Upload queue is empty.')
+            crate_logger.debug('Upload queue is empty.')
 
 
 download_queue = queue.Queue()
