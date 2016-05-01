@@ -262,8 +262,8 @@ class SSLCherryPyServer(ServerAdapter):
         server = wsgiserver.CherryPyWSGIServer((self.host, self.port), server_handler)
         # Uses the following github page's recommendation for setting up the cert:
         # https://github.com/nickbabcock/bottle-ssl
-        server.ssl_adapter = ssl_builtin.BuiltinSSLAdapter(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cacert.pem'),
-                                                           os.path.join(os.path.dirname(os.path.dirname(__file__)), 'privkey.pem'))
+        server.ssl_adapter = ssl_builtin.BuiltinSSLAdapter(conf_obj['ssl']['cacert_pem_path'],
+                                                           conf_obj['ssl']['privkey_pem_path'])
         try:
             server.start()
         finally:
@@ -285,6 +285,10 @@ if __name__ == '__main__':
     arg_parser.add_argument('--client_secret', type=str,
                             help='Client Secret provided by {}'.format(cloud_provider_name), default='')
     arg_parser.add_argument('--box_dir', type=str, help='directory for the root of box', default='~/box')
+    arg_parser.add_argument('--cacert_pem_path', type=str, help='filepath to where the cacert.pem is located',
+                            default='')
+    arg_parser.add_argument('--privkey_pem_path', type=str, help='filepath to where the privkey.pem is located',
+                            default='')
     args = arg_parser.parse_args()
     had_oauth2 = conf_obj.has_section('oauth2')
     if not had_oauth2:
@@ -292,6 +296,20 @@ if __name__ == '__main__':
     conf_obj['oauth2'] = {
         'client_id': args.client_id or conf_obj['oauth2']['client_id'],
         'client_secret': args.client_secret or conf_obj['oauth2']['client_secret']
+    }
+    if 'ssl' not in conf_obj:
+        if not args.cacert_pem_path:
+            raise ValueError('Need a valid cacert_pem_path')
+        if not args.privkey_pem_path:
+            raise ValueError('Need a valid privkey_pem_path')
+        conf_obj['ssl'] = {
+            'cacert_pem_path': os.path.abspath(os.path.expanduser(args.cacert_pem_path)),
+            'privkey_pem_path': os.path.abspath(os.path.expanduser(args.privkey_pem_path)),
+        }
+    conf_obj['ssl'] = {
+        'cacert_pem_path': os.path.abspath(os.path.expanduser(args.cacert_pem_path)) if args.cacert_pem_path else conf_obj['ssl']['cacert_pem_path'],
+        'privkey_pem_path': os.path.abspath(os.path.expanduser(args.privkey_pem_path)) if args.privkey_pem_path else
+        conf_obj['ssl']['privkey_pem_path'],
     }
 
     conf_obj.write(open(cloud_credentials_file_path, 'w'))
