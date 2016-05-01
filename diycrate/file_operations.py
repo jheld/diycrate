@@ -229,9 +229,10 @@ class EventHandler(pyinotify.ProcessEvent):
                                         self.upload_queue.put(partial(src_file.delete))
                                         break
                                     elif did_find_cur_folder:
-                                        crate_logger.debug('do not currently support movinga same name folder into parent with'
-                                              'folder inside of the same name -- would may need to update the '
-                                              'contents')
+                                        crate_logger.debug(
+                                            'do not currently support movinga same name folder into parent with'
+                                            'folder inside of the same name -- would may need to update the '
+                                            'contents')
                                         break
                                 if (is_file and did_find_cur_file) or (is_dir and did_find_cur_folder):
                                     break
@@ -323,19 +324,15 @@ class EventHandler(pyinotify.ProcessEvent):
                 crate_logger.debug('Upload the folder: {}'.format(event.pathname))
                 self.upload_queue.put(partial(cur_box_folder.create_subfolder, event.name))
                 wm.add_watch(event.pathname, rec=True, mask=mask)
-        elif operation == 'close':
-            crate_logger.debug("Closing...: {}".format(event.pathname))
+        elif operation == 'modify':
+            crate_logger.debug("{op}...: {pathname}".format(op=operation, pathname=event.pathname))
             folders_to_traverse = self.folders_to_traverse(event.path)
             crate_logger.debug(folders_to_traverse)
             client = Client(self.oauth)
-            box_folder = cur_box_folder = None
-            for _ in range(5):
-                try:
-                    box_folder = client.folder(folder_id='0').get()
-                    cur_box_folder = box_folder
-                    break
-                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
-                     crate_logger.debug(traceback.format_exc())
+            cur_box_folder = None
+            folder_id = '0'
+            retry_limit = 5
+            cur_box_folder = get_box_folder(client, cur_box_folder, folder_id, retry_limit)
             # if we're modifying in root box dir, then we've already found the folder
             is_base = BOX_DIR in (event.path, event.path[:-1],)
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
@@ -376,15 +373,15 @@ class EventHandler(pyinotify.ProcessEvent):
                                                            self.oauth])
                                 else:
                                     crate_logger.debug('Skipping the update because not versioned: {}, '
-                                          'fresh_download: {}, '
-                                          'version time_stamp >= '
+                                                       'fresh_download: {}, '
+                                                       'version time_stamp >= '
                                                        'new time stamp: {}, event pathname: {}, cur file id: {}'.format(
                                         not was_versioned,
                                         item_version['fresh_download'],
                                         item_version['time_stamp'] >= last_modified_time,
                                         event.pathname,
                                         cur_file['id']))
-                            except TypeError as e:
+                            except TypeError:
                                 crate_logger.debug(traceback.format_exc())
                             except Exception:
                                 crate_logger.debug(traceback.format_exc())
@@ -415,14 +412,8 @@ class EventHandler(pyinotify.ProcessEvent):
             folders_to_traverse = self.folders_to_traverse(event.path)
             crate_logger.debug(folders_to_traverse)
             client = Client(self.oauth)
-            box_folder = cur_box_folder = None
-            for _ in range(5):
-                try:
-                    box_folder = client.folder(folder_id='0').get()
-                    cur_box_folder = box_folder
-                    break
-                except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
-                    crate_logger.debug(traceback.format_exc())
+            cur_box_folder = None
+            cur_box_folder = get_box_folder(client, cur_box_folder, '0', 5)
             # if we're modifying in root box dir, then we've already found the folder
             is_base = BOX_DIR in (event.path, event.path[:-1],)
             cur_box_folder = self.traverse_path(client, event, cur_box_folder, folders_to_traverse)
@@ -477,7 +468,7 @@ class EventHandler(pyinotify.ProcessEvent):
         :return:
         """
         if not event.name.startswith('.~lock'):  # avoid propagating lock files
-            self.operations.append([event, 'close'])
+            self.operations.append([event, 'modify'])
 
     def process_IN_MOVED_FROM(self, event):
         """
@@ -509,13 +500,41 @@ class EventHandler(pyinotify.ProcessEvent):
                     self.operations.append([[move_event, event], 'move'])
                 break
         if not found_from and (not to_trash and to_box):
-            self.operations.append([event, 'close'])  # "close"/"modify" seems appropriate
+            self.operations.append([event, 'modify'])  # "close"/"modify" seems appropriate
             crate_logger.debug("Moved to: {}".format(event.pathname))  # allow moving from a ~.lock file...i guess that may be okay
 
     def process_IN_CLOSE(self, event):
         if not event.name.startswith('.~lock'):  # avoid propagating lock files
             crate_logger.debug('Had a close on: {}'.format(event))
             self.operations.append([event, 'real_close'])
+
+
+def get_box_folder(client, cur_box_folder, folder_id, retry_limit):
+    """
+
+    :param client:
+    :param cur_box_folder:
+    :param folder_id:
+    :param retry_limit:
+    :return:
+    """
+    for i in range(retry_limit):
+        try:
+            box_folder = client.folder(folder_id=folder_id).get()
+            cur_box_folder = box_folder
+            break
+        except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
+            if i + 1 >= retry_limit:
+                crate_logger.warn('Attempt ({retry_count}) out of ({max_count}); Going to give '
+                                  'up on the write event because: {trace}'.format(retry_count=i,
+                                                                                  max_count=retry_limit,
+                                                                                  trace=traceback.format_exc()))
+            else:
+                crate_logger.warn('Attempt ({retry_count}) '
+                                  'out of ({max_count}): {trace}'.format(retry_count=i,
+                                                                         max_count=retry_limit,
+                                                                         trace=traceback.format_exc()))
+    return cur_box_folder
 
 
 wm = pyinotify.WatchManager()

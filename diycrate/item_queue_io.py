@@ -17,7 +17,6 @@ from requests.packages.urllib3.exceptions import ProtocolError
 from diycrate.file_operations import wm, mask
 from diycrate.cache_utils import redis_key, redis_set, redis_get, r_c
 
-
 crate_logger = logging.getLogger('diy_crate_logger')
 crate_logger.setLevel(logging.DEBUG)
 
@@ -40,7 +39,7 @@ def upload_queue_processor():
             callable_up = upload_queue.get()  # blocks
             # TODO: pass in the actual item being updated/uploaded, so we can do more intelligent retry mechanisms
             was_list = isinstance(callable_up, list)
-            last_modified_time = None
+            last_modified_time = oauth = None
             if was_list:
                 last_modified_time, callable_up, oauth = callable_up
             args = callable_up.args if isinstance(callable_up, partial) else None
@@ -53,13 +52,13 @@ def upload_queue_processor():
                         if isinstance(item, File):
                             client = Client(oauth)
                             file_obj = client.file(file_id=item.object_id).get()
-                            redis_set(r_c, file_obj, last_modified_time, BOX_DIR=BOX_DIR)
+                            redis_set(r_c, file_obj, last_modified_time, box_dir_path=BOX_DIR)
                     break
                 except BoxAPIException as e:
                     crate_logger.debug('{}, {}'.format(args, traceback.format_exc()))
                     if e.status == 409:
                         crate_logger.debug('Apparently Box says this item already exists...'
-                              'and we were trying to create it. Need to handle this better')
+                                           'and we were trying to create it. Need to handle this better')
                         break
                 except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     time.sleep(3)
@@ -68,7 +67,7 @@ def upload_queue_processor():
                         crate_logger.debug('Upload giving up on: {}'.format(callable_up))
                         # no immediate plans to do anything with this info, yet.
                         uploads_given_up_on.append(callable_up)
-                except (TypeError, FileNotFoundError) as e:
+                except (TypeError, FileNotFoundError):
                     crate_logger.debug(traceback.format_exc())
                     break
             upload_queue.task_done()
@@ -84,7 +83,7 @@ def download_queue_processor():
             item, path, oauth = download_queue.get()  # blocks
             if item['type'] == 'file':
                 info = redis_get(r_c, item) if r_c.exists(redis_key(item['id'])) else None
-                client = Client(oauth)
+                # client = Client(oauth)  # keep it around for easy access
                 # hack because we did not use to store the file_path, but do not want to force a download
                 if info and 'file_path' not in info:
                     info['file_path'] = path
@@ -106,7 +105,7 @@ def download_queue_processor():
                                 crate_logger.debug(traceback.format_exc())
                                 if e.status == 404:
                                     crate_logger.debug('Apparently item: {}, {} has been deleted, '
-                                          'right before we tried to download'.format(item['id'], path))
+                                                       'right before we tried to download'.format(item['id'], path))
                                 break
                             was_versioned = r_c.exists(redis_key(item['id']))
                             #
@@ -116,8 +115,8 @@ def download_queue_processor():
                             # version_info[item['id']]['etag'] = item['etag']
                             # version_info[item['id']]['fresh_download'] = not was_versioned
                             # version_info[item['id']]['time_stamp'] = os.path.getmtime(path)  # duh...since we have it!
-                            redis_set(r_c, item, os.path.getmtime(path), fresh_download=not was_versioned,
-                                      folder=os.path.dirname(path), BOX_DIR=BOX_DIR)
+                            redis_set(r_c, item, os.path.getmtime(path), box_dir_path=BOX_DIR,
+                                      fresh_download=not was_versioned, folder=os.path.dirname(path))
                             break
                     except (ConnectionResetError, ConnectionError):
                         crate_logger.debug(traceback.format_exc())
@@ -135,9 +134,9 @@ def download_queue_monitor():
     while True:
         time.sleep(10)
         if download_queue.not_empty:
-             crate_logger.debug('Download queue size: {}'.format(download_queue.qsize()))
+            crate_logger.debug('Download queue size: {}'.format(download_queue.qsize()))
         else:
-             crate_logger.debug('Download queue is empty.')
+            crate_logger.debug('Download queue is empty.')
 
 
 def upload_queue_monitor():

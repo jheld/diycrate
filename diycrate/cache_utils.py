@@ -14,42 +14,44 @@ def redis_key(key):
     return 'diy_crate.version.{}'.format(key)
 
 
-def redis_set(r_c, obj, last_modified_time, BOX_DIR, fresh_download=False, folder=None):
+def redis_set(cache_client, cloud_item, last_modified_time, box_dir_path, fresh_download=False, folder=None):
     """
 
-    :param r_c:
-    :param obj:
+    :param cache_client:
+    :param cloud_item:
     :param last_modified_time:
+    :param box_dir_path:
     :param fresh_download:
+    :param folder:
     :return:
     """
-    key = redis_key(obj['id'])
+    key = redis_key(cloud_item['id'])
     if folder:
         path = folder
-    elif int(obj['path_collection']['total_count']) > 1:
+    elif int(cloud_item['path_collection']['total_count']) > 1:
         path = '{}'.format(os.path.sep).join([folder['name']
-                                                  for folder in
-                                                  obj['path_collection']['entries'][1:]])
+                                              for folder in
+                                              cloud_item['path_collection']['entries'][1:]])
     else:
         path = ''
-    path = os.path.join(BOX_DIR, path)
-    r_c.set(key, json.dumps({'fresh_download': fresh_download,
+    path = os.path.join(box_dir_path, path)
+    cache_client.set(key, json.dumps({'fresh_download': fresh_download,
                              'time_stamp': last_modified_time,
-                             'etag': obj['etag'],
-                             'file_path': os.path.join(path, obj['name'])}))
-    r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
+                             'etag': cloud_item['etag'],
+                             'file_path': os.path.join(path, cloud_item['name'])}))
+    cache_client.set('diy_crate.last_save_time_stamp', int(time.time()))
     # assert redis_get(obj)
 
 
-def redis_get(r_c, obj):
+def redis_get(cache_client, obj):
     """
 
-    :param r_c:
+    :param cache_client:
     :param obj:
     :return:
     """
     key = redis_key(obj['id'])
-    return json.loads(str(r_c.get(key), encoding='utf-8', errors='strict'))
+    return json.loads(str(cache_client.get(key), encoding='utf-8', errors='strict'))
 
 
 r_c = redis.StrictRedis()

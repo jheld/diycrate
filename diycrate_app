@@ -83,8 +83,7 @@ def long_poll_event_listener():
     Receive and process remote cloud item events in real-time
     :return:
     """
-    oauth = handler.oauth
-    client = Client(oauth=oauth)
+    client = Client(oauth=handler.oauth)
     while True:
         try:
             stream_position = client.events().get_latest_stream_position()
@@ -132,7 +131,6 @@ def long_poll_event_listener():
                         if src_file_path and os.path.exists(src_file_path):
                             os.rename(src_file_path, file_path)
                             version_info = redis_get(r_c, obj=folder_obj)
-                            src_file_path = version_info['file_path']
                             version_info['file_path'] = file_path
                             version_info['etag'] = folder_obj['etag']
                             r_c.set(redis_key(obj_id), json.dumps(version_info))
@@ -215,21 +213,21 @@ def oauth_handler():
     :return:
     """
     assert bottle_app.csrf_token == bottle.request.GET['state']
-    oauth = bottle_app.oauth
     #  we actually store these values in redis as an explicit part of the callback, so we basically throw these away
-    access_token, refresh_token = oauth.authenticate(bottle.request.GET['code'])
-    start_cloud_threads(oauth)
+    # access_token, refresh_token = bottle_app.oauth.authenticate(bottle.request.GET['code'])
+    bottle_app.oauth.authenticate(bottle.request.GET['code'])
+    start_cloud_threads(bottle_app.oauth)
 
     return 'OK'
 
 
-def start_cloud_threads(oauth):
+def start_cloud_threads(client_oauth):
     """
 
     :return:
     """
-    client = Client(oauth)
-    handler.oauth = oauth
+    client = Client(client_oauth)
+    handler.oauth = client_oauth
     wm.add_watch(BOX_DIR, mask, rec=False)
     box_folder = client.folder(folder_id='0').get()
     download_thread.daemon = True

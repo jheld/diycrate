@@ -59,8 +59,8 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
                     os.mkdir(local_path)
                     fresh_download = True
                 try:
-                    redis_set(r_c=r_c, obj=box_item, last_modified_time=os.path.getmtime(local_path),
-                              BOX_DIR=BOX_DIR, fresh_download=fresh_download, folder=os.path.dirname(local_path))
+                    redis_set(cache_client=r_c, cloud_item=box_item, last_modified_time=os.path.getmtime(local_path),
+                              box_dir_path=BOX_DIR, fresh_download=fresh_download, folder=os.path.dirname(local_path))
                     walk_and_notify_and_download_tree(local_path,
                                                       client.folder(folder_id=box_item['id']).get(), client)
                 except BoxAPIException as e:

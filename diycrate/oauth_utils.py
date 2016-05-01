@@ -3,13 +3,13 @@ from boxsdk import OAuth2
 from diycrate.cache_utils import r_c
 
 
-def setup_oauth(r_c, conf_obj, callback):
+def setup_oauth(cache_client, conf_object, callback):
     oauth = OAuth2(
-        client_id=conf_obj['oauth2']['client_id'],
-        client_secret=conf_obj['oauth2']['client_secret'],
+        client_id=conf_object['oauth2']['client_id'],
+        client_secret=conf_object['oauth2']['client_secret'],
         store_tokens=callback,
-        access_token=r_c.get('diy_crate.auth.access_token'),
-        refresh_token=r_c.get('diy_crate.auth.refresh_token')
+        access_token=cache_client.get('diy_crate.auth.access_token'),
+        refresh_token=cache_client.get('diy_crate.auth.refresh_token')
     )
     return oauth
 
