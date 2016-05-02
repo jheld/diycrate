@@ -4,6 +4,13 @@ from diycrate.cache_utils import r_c
 
 
 def setup_oauth(cache_client, conf_object, callback):
+    """
+    sets up the oauth instance with credentials and runtime callback.
+    :param cache_client:
+    :param conf_object:
+    :param callback:
+    :return:
+    """
     oauth = OAuth2(
         client_id=conf_object['oauth2']['client_id'],
         client_secret=conf_object['oauth2']['client_secret'],
