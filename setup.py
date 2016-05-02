@@ -35,14 +35,15 @@ packages = ['bottle==0.12.9',
 
 setup(
     name="diycrate",
-    version="0.2.8",
+    version="0.2.9",
     author="Jason Held",
     author_email="jasonsheld@gmail.com",
-    description=("box.com for linux -- unofficial, based on python SDK"),
+    description="box.com for linux -- unofficial, based on python SDK",
     license="MIT",
-    keywords="cloud storage box.com sdk linux",
+    keywords="cloud storage box.com sdk linux box",
     url="https://github.com/jheld/diycrate",
     install_requires=packages,
+    scripts=['diycrate_app', ],
     packages=['diycrate', ],
     long_description='box.com for linux\n'
                      'We now support SSL (self signed cert\'s yo)!'
