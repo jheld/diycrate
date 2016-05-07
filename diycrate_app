@@ -307,6 +307,11 @@ def long_poll_event_listener():
 
 
 def get_sub_ids(box_id):
+    """
+    Retrieve the box item ids that are stored in this sub path
+    :param box_id:
+    :return:
+    """
     ids = []
     item_info = json.loads(str(r_c.get(redis_key(box_id)), encoding='utf-8', errors='strict'))
     for sub_id in item_info['sub_ids']:
