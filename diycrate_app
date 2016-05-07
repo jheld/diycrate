@@ -2,12 +2,14 @@
 import argparse
 import configparser
 import json
+import shutil
 import os
 import logging
 import subprocess
 import threading
 import traceback
 import webbrowser
+from functools import partial
 from logging import handlers
 
 import bottle
@@ -15,16 +17,16 @@ import pyinotify
 import time
 from bottle import ServerAdapter
 from boxsdk import Client
+from boxsdk.object.folder import Folder
 from cherrypy import wsgiserver
 from cherrypy.wsgiserver import ssl_builtin
 
-from diycrate.cache_utils import redis_key, redis_get, r_c
+from diycrate.cache_utils import redis_key, redis_get, r_c, redis_set
 from diycrate.file_operations import EventHandler, wm, in_moved_to, in_moved_from, mask
 from diycrate.item_queue_io import upload_queue_processor, download_queue_processor, download_queue_monitor, \
     upload_queue_monitor, download_queue, upload_queue
 from diycrate.oauth_utils import setup_oauth, store_tokens_callback
 from diycrate.path_utils import re_walk
-
 
 crate_logger = logging.getLogger('diy_crate_logger')
 crate_logger.setLevel(logging.DEBUG)
@@ -91,6 +93,64 @@ def long_poll_event_listener():
                 crate_logger.debug('{} happened!'.format(json.dumps(event)))
                 if event.get('message', '').lower() == 'reconnect':
                     break
+                if event['event_type'] == 'ITEM_CREATE':
+                    obj_id = event['source']['id']
+                    obj_type = event['source']['type']
+                    if obj_type == 'folder':
+                        if int(event['source']['path_collection']['total_count']) > 1:
+                            path = '{}'.format(os.path.sep).join([folder['name']
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][
+                                                                  1:]])
+                        else:
+                            path = ''
+                        path = os.path.join(BOX_DIR, path)
+                        file_path = os.path.join(path, event['source']['name'])
+                        if not os.path.isdir(file_path):
+                            os.makedirs(file_path)
+                            redis_set(r_c, client.folder(folder_id=obj_id), os.path.getmtime(file_path),
+                                      BOX_DIR, True, path)
+                if event['event_type'] == 'ITEM_MOVE':
+                    obj_id = event['source']['id']
+                    obj_type = event['source']['type']
+                    if obj_type in ('file', 'folder'):
+                        if r_c.exists(redis_key(obj_id)):
+                            item_info = json.loads(str(r_c.get(redis_key(obj_id)),
+                                                       encoding='utf-8',
+                                                       errors='strict'))
+                            src_file_path = json.loads(str(r_c.get(redis_key(obj_id)),
+                                                           encoding='utf-8',
+                                                           errors='strict'))['file_path']
+                            if int(event['source']['path_collection']['total_count']) > 1:
+                                path = '{}'.format(os.path.sep).join([folder['name']
+                                                                      for folder in
+                                                                      event['source']['path_collection']['entries'][
+                                                                      1:]])
+                            else:
+                                path = ''
+                            path = os.path.join(BOX_DIR, path)
+                            file_path = os.path.join(path, event['source']['name'])
+                            if os.path.exists(src_file_path):
+                                to_set = []
+                                if obj_type == 'folder':
+                                    for sub_id in get_sub_ids(obj_id):
+                                        if r_c.exists(redis_key(sub_id)):
+                                            sub_item_info = json.loads(str(r_c.get(redis_key(sub_id)),
+                                                                           encoding='utf-8',
+                                                                           errors='strict'))
+                                            orig_len = len(src_file_path.split(os.path.sep))
+                                            tail = os.path.sep.join(
+                                                sub_item_info['file_path'].split(os.path.sep)[orig_len:])
+                                            new_sub_path = os.path.join(file_path, tail)
+                                            sub_item_info['file_path'] = new_sub_path
+                                            to_set.append(
+                                                partial(r_c.set, redis_key(sub_id), json.dumps(sub_item_info)))
+                                shutil.move(src_file_path, file_path)
+                                for item in to_set:
+                                    item()
+                                item_info['file_path'] = file_path
+                                item_info['etag'] = event['source']['etag']
+                                r_c.set(redis_key(obj_id), json.dumps(item_info))
                 if event['event_type'] == 'ITEM_RENAME':
                     obj_id = event['source']['id']
                     obj_type = event['source']['type']
@@ -105,7 +165,8 @@ def long_poll_event_listener():
                         path = os.path.join(BOX_DIR, path)
                         file_path = os.path.join(path, event['source']['name'])
                         file_obj = client.file(file_id=obj_id).get()
-                        src_file_path = None if not r_c.exists(redis_key(obj_id)) else redis_get(r_c, file_obj)['file_path']
+                        src_file_path = None if not r_c.exists(redis_key(obj_id)) else redis_get(r_c, file_obj)[
+                            'file_path']
                         if src_file_path and os.path.exists(src_file_path):
                             version_info = redis_get(r_c, obj=file_obj)
                             os.rename(src_file_path, file_path)
@@ -170,6 +231,22 @@ def long_poll_event_listener():
                         #     #                         'time_stamp': time.time()}))
                         # else:
                         #     pass
+                    elif obj_type == 'folder':
+                        if int(event['source']['path_collection']['total_count']) > 1:
+                            path = '{}'.format(os.path.sep).join([folder['name']
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][
+                                                                  1:]])
+                        else:
+                            path = ''
+                        path = os.path.join(BOX_DIR, path)
+                        if not os.path.exists(path):  # just in case this is a file in a new subfolder
+                            os.makedirs(path)
+                        file_path = os.path.join(path, event['source']['name'])
+                        if not os.path.exists(file_path):
+                            os.makedirs(file_path)
+                            redis_set(r_c, client.folder(folder_id=obj_id), os.path.getmtime(file_path),
+                                      BOX_DIR, True, path)
                 elif event['event_type'] == 'ITEM_TRASH':
                     obj_id = event['source']['id']
                     obj_type = event['source']['type']
@@ -193,10 +270,53 @@ def long_poll_event_listener():
                             r_c.delete(redis_key(obj_id))
                             r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
                         notify_user_with_gui('Box message: Deleted {}'.format(file_path))
+                    elif obj_type == 'folder':
+                        item_info = r_c.get(redis_key(obj_id))
+                        if item_info:
+                            item_info = json.loads(str(item_info, encoding='utf-8', errors='strict'))
+                        if int(event['source']['path_collection']['total_count']) > 1:
+                            path = '{}'.format(os.path.sep).join([folder['name']
+                                                                  for folder in
+                                                                  event['source']['path_collection']['entries'][
+                                                                  1:]])
+                        else:
+                            path = ''
+                        path = os.path.join(BOX_DIR, path)
+                        file_path = os.path.join(path, event['source']['name']) if not item_info else item_info[
+                            'file_path']
+                        if os.path.isdir(file_path):
+                            # still need to get the parent_id
+                            for box_id in get_sub_ids(obj_id):
+                                r_c.delete(redis_key(box_id))
+                            r_c.delete(redis_key(obj_id))
+                            shutil.rmtree(file_path)
+                            parent_id = r_c.get(redis_key(obj_id)).get('parent_id')
+                            if parent_id:
+                                parent_folder = r_c.get(redis_key(parent_id))
+                                sub_ids = parent_folder.get('sub_ids', [])
+                                if sub_ids:
+                                    sub_ids.remove(obj_id)
+                                    r_c.set(redis_key(parent_id), json.dumps(parent_folder))
+                                r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
+                            notify_user_with_gui('Box message: Deleted {}'.format(file_path))
+
                 elif event['event_type'] == 'ITEM_DOWNLOAD':
                     pass
         except Exception:
-             crate_logger.debug(traceback.format_exc())
+            crate_logger.debug(traceback.format_exc())
+
+
+def get_sub_ids(box_id):
+    ids = []
+    item_info = json.loads(str(r_c.get(redis_key(box_id)), encoding='utf-8', errors='strict'))
+    for sub_id in item_info['sub_ids']:
+        sub_item_info = json.loads(str(r_c.get(redis_key(sub_id)), encoding='utf-8', errors='strict'))
+        if os.path.isdir(sub_item_info['file_path']):
+            ids.extend(get_sub_ids(sub_id))
+        ids.append(sub_id)
+    else:
+        return ids
+    return ids
 
 
 long_poll_thread = threading.Thread(target=long_poll_event_listener)
@@ -305,7 +425,8 @@ if __name__ == '__main__':
             'privkey_pem_path': os.path.abspath(os.path.expanduser(args.privkey_pem_path)),
         }
     conf_obj['ssl'] = {
-        'cacert_pem_path': os.path.abspath(os.path.expanduser(args.cacert_pem_path)) if args.cacert_pem_path else conf_obj['ssl']['cacert_pem_path'],
+        'cacert_pem_path': os.path.abspath(os.path.expanduser(args.cacert_pem_path)) if args.cacert_pem_path else
+        conf_obj['ssl']['cacert_pem_path'],
         'privkey_pem_path': os.path.abspath(os.path.expanduser(args.privkey_pem_path)) if args.privkey_pem_path else
         conf_obj['ssl']['privkey_pem_path'],
     }

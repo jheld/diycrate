@@ -24,7 +24,7 @@ log_format = logging.Formatter(log_format)
 l_handler.setFormatter(log_format)
 
 
-def walk_and_notify_and_download_tree(path, box_folder, client):
+def walk_and_notify_and_download_tree(path, box_folder, client, p_id=None):
     """
     Walk the path recursively and add watcher and create the path.
     :param path:
@@ -48,8 +48,10 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
         if os.path.isfile(local_path):
             upload_queue.put([os.path.getmtime(local_path), partial(cur_box_folder.upload, local_path, local_file),
                               client._oauth])
+    ids_in_folder = []
     for offset in range(0, num_entries_in_folder, limit):
         for box_item in b_folder.get_items(limit=limit, offset=offset):
+            ids_in_folder.append(box_item['id'])
             if box_item['name'] in local_files:
                 local_files.remove(box_item['name'])
             if box_item['type'] == 'folder':
@@ -62,7 +64,8 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
                     redis_set(cache_client=r_c, cloud_item=box_item, last_modified_time=os.path.getmtime(local_path),
                               box_dir_path=BOX_DIR, fresh_download=fresh_download, folder=os.path.dirname(local_path))
                     walk_and_notify_and_download_tree(local_path,
-                                                      client.folder(folder_id=box_item['id']).get(), client)
+                                                      client.folder(folder_id=box_item['id']).get(), client,
+                                                      p_id=box_folder['id'])
                 except BoxAPIException as e:
                     crate_logger.debug(traceback.format_exc())
                     if e.status == 404:
@@ -79,6 +82,10 @@ def walk_and_notify_and_download_tree(path, box_folder, client):
                         if r_c.exists(redis_key(box_item['id'])):
                             crate_logger.debug('Deleting {}, {}'.format(box_item['id'], box_item['name']))
                             r_c.delete(redis_key(box_item['id']))
+    redis_set(cache_client=r_c, cloud_item=b_folder, last_modified_time=os.path.getmtime(path),
+              box_dir_path=BOX_DIR, fresh_download=not r_c.exists(redis_key(box_folder['id'])),
+              folder=os.path.dirname(path),
+              sub_ids=ids_in_folder, parent_id=p_id)
 
 
 def re_walk(path, box_folder, client):
