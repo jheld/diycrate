@@ -9,6 +9,11 @@ from setuptools import setup
 
 
 def read(file_name):
+    """
+    Return the contents of the file at the file_name
+    :param file_name:
+    :return:
+    """
     return open(os.path.join(os.path.dirname(__file__), file_name)).read()
 
 

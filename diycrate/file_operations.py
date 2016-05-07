@@ -504,6 +504,11 @@ class EventHandler(pyinotify.ProcessEvent):
             crate_logger.debug("Moved to: {}".format(event.pathname))  # allow moving from a ~.lock file...i guess that may be okay
 
     def process_IN_CLOSE(self, event):
+        """
+        Overrides the super.
+        :param event:
+        :return:
+        """
         if not event.name.startswith('.~lock'):  # avoid propagating lock files
             crate_logger.debug('Had a close on: {}'.format(event))
             self.operations.append([event, 'real_close'])
