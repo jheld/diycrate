@@ -372,15 +372,18 @@ class EventHandler(pyinotify.ProcessEvent):
                                                            partial(cur_file.update_contents, event.pathname),
                                                            self.oauth])
                                 else:
-                                    crate_logger.debug('Skipping the update because not versioned: {}, '
-                                                       'fresh_download: {}, '
+                                    is_new_time_stamp = item_version['time_stamp'] >= last_modified_time
+                                    crate_logger.debug('Skipping the update because not versioned: {not_versioned}, '
+                                                       'fresh_download: {fresh_download}, '
                                                        'version time_stamp >= '
-                                                       'new time stamp: {}, event pathname: {}, cur file id: {}'.format(
-                                        not was_versioned,
-                                        item_version['fresh_download'],
-                                        item_version['time_stamp'] >= last_modified_time,
-                                        event.pathname,
-                                        cur_file['id']))
+                                                       'new time stamp: {new_time_stamp}, '
+                                                       'event pathname: {path_name}, '
+                                                       'cur file id: {obj_id}'.format(not_versioned=not was_versioned,
+                                                                                      fresh_download=item_version[
+                                                                                          'fresh_download'],
+                                                                                      new_time_stamp=is_new_time_stamp,
+                                                                                      path_name=event.pathname,
+                                                                                      obj_id=cur_file['id']))
                             except TypeError:
                                 crate_logger.debug(traceback.format_exc())
                             except Exception:

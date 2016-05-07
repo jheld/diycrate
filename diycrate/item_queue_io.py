@@ -55,14 +55,16 @@ def upload_queue_processor():
                             redis_set(r_c, file_obj, last_modified_time, box_dir_path=BOX_DIR)
                     break
                 except BoxAPIException as e:
-                    crate_logger.debug('{}, {}'.format(args, traceback.format_exc()))
+                    crate_logger.debug('{the_args}, {the_trace}'.format(the_args=args,
+                                                                        the_trace=traceback.format_exc()))
                     if e.status == 409:
                         crate_logger.debug('Apparently Box says this item already exists...'
                                            'and we were trying to create it. Need to handle this better')
                         break
                 except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     time.sleep(3)
-                    crate_logger.debug('{}, {}'.format(args, traceback.format_exc()))
+                    crate_logger.debug('{the_args}, {the_trace}'.format(the_args=args,
+                                                                        the_trace=traceback.format_exc()))
                     if x >= num_retries - 1:
                         crate_logger.debug('Upload giving up on: {}'.format(callable_up))
                         # no immediate plans to do anything with this info, yet.
@@ -97,15 +99,17 @@ def download_queue_processor():
                                 break
                             try:
                                 with open(path, 'wb') as item_handler:
-                                    crate_logger.debug('About to download: {}, {}'.format(item['name'], item['id']))
+                                    crate_logger.debug('About to download: {obj_name}, '
+                                                       '{obj_id}'.format(obj_name=item['name'], obj_id=item['id']))
                                     item.download_to(item_handler)
                                     path_to_add = os.path.dirname(path)
                                     wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
                             except BoxAPIException as e:
                                 crate_logger.debug(traceback.format_exc())
                                 if e.status == 404:
-                                    crate_logger.debug('Apparently item: {}, {} has been deleted, '
-                                                       'right before we tried to download'.format(item['id'], path))
+                                    crate_logger.debug('Apparently item: {obj_id}, {path} has been deleted, '
+                                                       'right before we tried to download'.format(obj_id=item['id'],
+                                                                                                  path=path))
                                 break
                             was_versioned = r_c.exists(redis_key(item['id']))
                             #

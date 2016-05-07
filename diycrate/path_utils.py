@@ -24,12 +24,14 @@ log_format = logging.Formatter(log_format)
 l_handler.setFormatter(log_format)
 
 
-def walk_and_notify_and_download_tree(path, box_folder, client, p_id=None):
+def walk_and_notify_and_download_tree(path, box_folder, client, oauth_obj, p_id=None):
     """
     Walk the path recursively and add watcher and create the path.
     :param path:
     :param box_folder:
     :param client:
+    :param oauth_obj:
+    :param p_id:
     :return:
     """
     if os.path.isdir(path):
@@ -47,7 +49,7 @@ def walk_and_notify_and_download_tree(path, box_folder, client, p_id=None):
         local_path = os.path.join(path, local_file)
         if os.path.isfile(local_path):
             upload_queue.put([os.path.getmtime(local_path), partial(cur_box_folder.upload, local_path, local_file),
-                              client._oauth])
+                              oauth_obj])
     ids_in_folder = []
     for offset in range(0, num_entries_in_folder, limit):
         for box_item in b_folder.get_items(limit=limit, offset=offset):
@@ -64,23 +66,29 @@ def walk_and_notify_and_download_tree(path, box_folder, client, p_id=None):
                     redis_set(cache_client=r_c, cloud_item=box_item, last_modified_time=os.path.getmtime(local_path),
                               box_dir_path=BOX_DIR, fresh_download=fresh_download, folder=os.path.dirname(local_path))
                     walk_and_notify_and_download_tree(local_path,
-                                                      client.folder(folder_id=box_item['id']).get(), client,
+                                                      client.folder(folder_id=box_item['id']).get(), client, oauth_obj,
                                                       p_id=box_folder['id'])
                 except BoxAPIException as e:
                     crate_logger.debug(traceback.format_exc())
                     if e.status == 404:
-                        crate_logger.debug('Box says: {}, {}, is a 404 status.'.format(box_item['id'], box_item['name']))
-                        crate_logger.debug('But, this is a folder, we do not handle recursive folder deletes correctly yet.')
+                        crate_logger.debug('Box says: {obj_id}, '
+                                           '{obj_name}, is a 404 status.'.format(obj_id=box_item['id'],
+                                                                                 obj_name=box_item[
+                                                                                     'name']))
+                        crate_logger.debug(
+                            'But, this is a folder, we do not handle recursive folder deletes correctly yet.')
             else:
                 try:
                     file_obj = box_item
-                    download_queue.put((file_obj, os.path.join(path, box_item['name']), client._oauth))
+                    download_queue.put((file_obj, os.path.join(path, box_item['name']), oauth_obj))
                 except BoxAPIException as e:
                     crate_logger.debug(traceback.format_exc())
                     if e.status == 404:
-                        crate_logger.debug('Box says: {}, {}, is a 404 status.'.format(box_item['id'], box_item['name']))
+                        crate_logger.debug('Box says: {obj_id}, {obj_name}, '
+                                           'is a 404 status.'.format(obj_id=box_item['id'], obj_name=box_item['name']))
                         if r_c.exists(redis_key(box_item['id'])):
-                            crate_logger.debug('Deleting {}, {}'.format(box_item['id'], box_item['name']))
+                            crate_logger.debug('Deleting {obj_id}, '
+                                               '{obj_name}'.format(obj_id=box_item['id'], obj_name=box_item['name']))
                             r_c.delete(redis_key(box_item['id']))
     redis_set(cache_client=r_c, cloud_item=b_folder, last_modified_time=os.path.getmtime(path),
               box_dir_path=BOX_DIR, fresh_download=not r_c.exists(redis_key(box_folder['id'])),
@@ -88,14 +96,15 @@ def walk_and_notify_and_download_tree(path, box_folder, client, p_id=None):
               sub_ids=ids_in_folder, parent_id=p_id)
 
 
-def re_walk(path, box_folder, client):
+def re_walk(path, box_folder, client, oauth_obj):
     """
 
     :param path:
     :param box_folder:
     :param client:
+    :param oauth_obj:
     :return:
     """
     while True:
-        walk_and_notify_and_download_tree(path, box_folder, client)
+        walk_and_notify_and_download_tree(path, box_folder, client, oauth_obj)
         time.sleep(3600)  # once an hour we walk the tree
