@@ -62,21 +62,31 @@ def walk_and_notify_and_download_tree(path, box_folder, client, oauth_obj, p_id=
                 if not os.path.isdir(local_path):
                     os.mkdir(local_path)
                     fresh_download = True
-                try:
-                    redis_set(cache_client=r_c, cloud_item=box_item, last_modified_time=os.path.getmtime(local_path),
-                              box_dir_path=BOX_DIR, fresh_download=fresh_download, folder=os.path.dirname(local_path))
-                    walk_and_notify_and_download_tree(local_path,
-                                                      client.folder(folder_id=box_item['id']).get(), client, oauth_obj,
-                                                      p_id=box_folder['id'])
-                except BoxAPIException as e:
-                    crate_logger.debug(traceback.format_exc())
-                    if e.status == 404:
-                        crate_logger.debug('Box says: {obj_id}, '
-                                           '{obj_name}, is a 404 status.'.format(obj_id=box_item['id'],
-                                                                                 obj_name=box_item[
-                                                                                     'name']))
-                        crate_logger.debug(
-                            'But, this is a folder, we do not handle recursive folder deletes correctly yet.')
+                retry_limit = 15
+                for i in range(0, retry_limit):
+                    try:
+                        redis_set(cache_client=r_c, cloud_item=box_item,
+                                  last_modified_time=os.path.getmtime(local_path),
+                                  box_dir_path=BOX_DIR, fresh_download=fresh_download,
+                                  folder=os.path.dirname(local_path))
+                        walk_and_notify_and_download_tree(local_path,
+                                                          client.folder(folder_id=box_item['id']).get(),
+                                                          client, oauth_obj,
+                                                          p_id=box_folder['id'])
+                        break
+                    except BoxAPIException as e:
+                        crate_logger.debug(traceback.format_exc())
+                        if e.status == 404:
+                            crate_logger.debug('Box says: {obj_id}, '
+                                               '{obj_name}, is a 404 status.'.format(obj_id=box_item['id'],
+                                                                                     obj_name=box_item[
+                                                                                         'name']))
+                            crate_logger.debug(
+                                'But, this is a folder, we do not handle recursive folder deletes correctly yet.')
+                            break
+                    except (ConnectionError, ConnectionResetError, BrokenPipeError):
+                        crate_logger.debug('Attempt {idx}/{limit}; {the_trace}'.format(the_trace=traceback.format_exc(),
+                                                                                       idx=i+1, limit=retry_limit))
             else:
                 try:
                     file_obj = box_item
