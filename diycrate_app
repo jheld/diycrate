@@ -319,8 +319,6 @@ def get_sub_ids(box_id):
         if os.path.isdir(sub_item_info['file_path']):
             ids.extend(get_sub_ids(sub_id))
         ids.append(sub_id)
-    else:
-        return ids
     return ids
 
 
