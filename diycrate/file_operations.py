@@ -372,15 +372,18 @@ class EventHandler(pyinotify.ProcessEvent):
                                                            partial(cur_file.update_contents, event.pathname),
                                                            self.oauth])
                                 else:
-                                    crate_logger.debug('Skipping the update because not versioned: {}, '
-                                                       'fresh_download: {}, '
+                                    is_new_time_stamp = item_version['time_stamp'] >= last_modified_time
+                                    crate_logger.debug('Skipping the update because not versioned: {not_versioned}, '
+                                                       'fresh_download: {fresh_download}, '
                                                        'version time_stamp >= '
-                                                       'new time stamp: {}, event pathname: {}, cur file id: {}'.format(
-                                        not was_versioned,
-                                        item_version['fresh_download'],
-                                        item_version['time_stamp'] >= last_modified_time,
-                                        event.pathname,
-                                        cur_file['id']))
+                                                       'new time stamp: {new_time_stamp}, '
+                                                       'event pathname: {path_name}, '
+                                                       'cur file id: {obj_id}'.format(not_versioned=not was_versioned,
+                                                                                      fresh_download=item_version[
+                                                                                          'fresh_download'],
+                                                                                      new_time_stamp=is_new_time_stamp,
+                                                                                      path_name=event.pathname,
+                                                                                      obj_id=cur_file['id']))
                             except TypeError:
                                 crate_logger.debug(traceback.format_exc())
                             except Exception:
@@ -490,20 +493,27 @@ class EventHandler(pyinotify.ProcessEvent):
         to_trash = os.path.commonprefix([trash_directory, event.pathname]) == trash_directory
         to_box = os.path.commonprefix([BOX_DIR, event.pathname]) == BOX_DIR
         for move_event in self.move_events:
-            if move_event.cookie == event.cookie and 'in_moved_from' in move_event.maskname.lower():
+            was_moved_from = 'in_moved_from' in move_event.maskname.lower()
+            if move_event.cookie == event.cookie and was_moved_from and os.path.commonprefix(
+                    [BOX_DIR, move_event.pathname]) == BOX_DIR:
                 found_from = True
+                # only count deletes that come from within the box path -- though this should always be the case
                 if to_trash:
-                    # only count deletes that come from within the box path -- though this should always be the case
-                    if os.path.commonprefix([BOX_DIR, move_event.pathname]) == BOX_DIR:
-                        self.operations.append([move_event, 'delete'])
+                    self.operations.append([move_event, 'delete'])
                 else:
                     self.operations.append([[move_event, event], 'move'])
                 break
         if not found_from and (not to_trash and to_box):
             self.operations.append([event, 'modify'])  # "close"/"modify" seems appropriate
-            crate_logger.debug("Moved to: {}".format(event.pathname))  # allow moving from a ~.lock file...i guess that may be okay
+            # allow moving from a ~.lock file...i guess that may be okay
+            crate_logger.debug("Moved to: {}".format(event.pathname))
 
     def process_IN_CLOSE(self, event):
+        """
+        Overrides the super.
+        :param event:
+        :return:
+        """
         if not event.name.startswith('.~lock'):  # avoid propagating lock files
             crate_logger.debug('Had a close on: {}'.format(event))
             self.operations.append([event, 'real_close'])
