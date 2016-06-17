@@ -16,6 +16,7 @@ from requests.packages.urllib3.exceptions import ProtocolError
 
 from diycrate.file_operations import wm, mask
 from diycrate.cache_utils import redis_key, redis_set, redis_get, r_c
+from diycrate.gui import notify_user_with_gui
 
 crate_logger = logging.getLogger('diy_crate_logger')
 crate_logger.setLevel(logging.DEBUG)
@@ -104,6 +105,7 @@ def download_queue_processor():
                                     item.download_to(item_handler)
                                     path_to_add = os.path.dirname(path)
                                     wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
+                                    notify_user_with_gui('Downloaded: {}'.format(path))
                             except BoxAPIException as e:
                                 crate_logger.debug(traceback.format_exc())
                                 if e.status == 404:

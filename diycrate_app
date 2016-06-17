@@ -2,11 +2,11 @@
 import argparse
 import configparser
 import json
-import shutil
-import os
 import logging
-import subprocess
+import os
+import shutil
 import threading
+import time
 import traceback
 import webbrowser
 from functools import partial
@@ -14,15 +14,14 @@ from logging import handlers
 
 import bottle
 import pyinotify
-import time
 from bottle import ServerAdapter
 from boxsdk import Client
-from boxsdk.object.folder import Folder
 from cherrypy import wsgiserver
 from cherrypy.wsgiserver import ssl_builtin
 
 from diycrate.cache_utils import redis_key, redis_get, r_c, redis_set
 from diycrate.file_operations import EventHandler, wm, in_moved_to, in_moved_from, mask
+from diycrate.gui import notify_user_with_gui
 from diycrate.item_queue_io import upload_queue_processor, download_queue_processor, download_queue_monitor, \
     upload_queue_monitor, download_queue, upload_queue
 from diycrate.oauth_utils import setup_oauth, store_tokens_callback
@@ -48,18 +47,6 @@ bottle_app = bottle.Bottle()
 # keep the lint-ing & introspection from complaining that these attributes don't exist before run-time.
 
 BOX_DIR = os.path.expanduser('~/box')
-
-
-def notify_user_with_gui(message):
-    """
-    Sends the message to the user
-    :param message:
-    :return:
-    """
-    proc = subprocess.Popen(['notify-send', message])
-    if proc.returncode:
-        crate_logger.debug('Tried sending a message to user, return code: {}'.format(proc.returncode))
-
 
 download_thread = threading.Thread(target=download_queue_processor)
 upload_thread = threading.Thread(target=upload_queue_processor)
@@ -243,10 +230,13 @@ def long_poll_event_listener():
                         if not os.path.exists(path):  # just in case this is a file in a new subfolder
                             os.makedirs(path)
                         file_path = os.path.join(path, event['source']['name'])
+                        box_message = 'new version'
                         if not os.path.exists(file_path):
                             os.makedirs(file_path)
                             redis_set(r_c, client.folder(folder_id=obj_id), os.path.getmtime(file_path),
                                       BOX_DIR, True, path)
+                            box_message = 'new folder'
+                        notify_user_with_gui('Box message: {} {}'.format(box_message, file_path), crate_logger)
                 elif event['event_type'] == 'ITEM_TRASH':
                     obj_id = event['source']['id']
                     obj_type = event['source']['type']
@@ -269,7 +259,7 @@ def long_poll_event_listener():
                         if r_c.exists(redis_key(obj_id)):
                             r_c.delete(redis_key(obj_id))
                             r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
-                        notify_user_with_gui('Box message: Deleted {}'.format(file_path))
+                        notify_user_with_gui('Box message: Deleted {}'.format(file_path), crate_logger)
                     elif obj_type == 'folder':
                         item_info = r_c.get(redis_key(obj_id))
                         if item_info:
@@ -298,7 +288,7 @@ def long_poll_event_listener():
                                     sub_ids.remove(obj_id)
                                     r_c.set(redis_key(parent_id), json.dumps(parent_folder))
                                 r_c.set('diy_crate.last_save_time_stamp', int(time.time()))
-                            notify_user_with_gui('Box message: Deleted {}'.format(file_path))
+                            notify_user_with_gui('Box message: Deleted {}'.format(file_path), crate_logger)
 
                 elif event['event_type'] == 'ITEM_DOWNLOAD':
                     pass
