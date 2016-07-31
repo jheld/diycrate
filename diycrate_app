@@ -54,12 +54,8 @@ upload_thread = threading.Thread(target=upload_queue_processor)
 trash_directory = os.path.expanduser('~/.local/share/Trash/files')
 
 upload_mon_thread = threading.Thread(target=upload_queue_monitor)
-upload_mon_thread.daemon = True
-upload_mon_thread.start()
 
 download_mon_thread = threading.Thread(target=download_queue_monitor)
-download_mon_thread.daemon = True
-download_mon_thread.start()
 
 handler = EventHandler(upload_queue=upload_queue)
 

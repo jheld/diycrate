@@ -1,5 +1,5 @@
 bottle==0.12.9
-boxsdk==1.5.1
+boxsdk==1.5.3
 decorator==4.0.9
 enum34==1.1.2
 ipython==4.1.2
