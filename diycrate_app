@@ -79,20 +79,27 @@ def long_poll_event_listener():
                 if event['event_type'] == 'ITEM_CREATE':
                     obj_id = event['source']['id']
                     obj_type = event['source']['type']
+                    if int(event['source']['path_collection']['total_count']) > 1:
+                        path = '{}'.format(os.path.sep).join([folder['name']
+                                                              for folder in
+                                                              event['source']['path_collection']['entries'][
+                                                              1:]])
+                    else:
+                        path = ''
+                    path = os.path.join(BOX_DIR, path)
+                    if not os.path.isdir(path):
+                        os.makedirs(path)
+                    file_path = os.path.join(path, event['source']['name'])
                     if obj_type == 'folder':
-                        if int(event['source']['path_collection']['total_count']) > 1:
-                            path = '{}'.format(os.path.sep).join([folder['name']
-                                                                  for folder in
-                                                                  event['source']['path_collection']['entries'][
-                                                                  1:]])
-                        else:
-                            path = ''
-                        path = os.path.join(BOX_DIR, path)
-                        file_path = os.path.join(path, event['source']['name'])
                         if not os.path.isdir(file_path):
                             os.makedirs(file_path)
-                            redis_set(r_c, client.folder(folder_id=obj_id), os.path.getmtime(file_path),
-                                      BOX_DIR, True, path)
+                        redis_set(r_c, client.folder(folder_id=obj_id), os.path.getmtime(file_path),
+                                  BOX_DIR, True, path)
+                    elif obj_type == 'file':
+                        if not os.path.isfile(file_path):
+                            download_queue.put(
+                                [client.file(file_id=obj_id).get(), os.path.join(path, event['source']['name']),
+                                 client._oauth])
                 if event['event_type'] == 'ITEM_MOVE':
                     obj_id = event['source']['id']
                     obj_type = event['source']['type']
