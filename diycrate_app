@@ -335,7 +335,11 @@ def start_cloud_threads(client_oauth):
     client = Client(client_oauth)
     handler.oauth = client_oauth
     wm.add_watch(BOX_DIR, mask, rec=False)
-    box_folder = client.folder(folder_id='0').get()
+    try:
+        box_folder = client.folder(folder_id='0').get()
+    except exception.BoxAPIException as e:
+        r_c.delete('diy_crate.auth.access_token', 'diy_crate.auth.refresh_token')
+        raise e
     download_thread.daemon = True
     download_thread.start()
     upload_thread.daemon = True
