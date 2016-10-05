@@ -33,10 +33,10 @@ def get_access_token(access_token):
     """
     import requests
     remote_url = conf_obj['box']['token_url']
-    diycrate_secret_key = r_c.get('diycrate_secret_key') or str(uuid.uuid4())
+    diycrate_secret_key = str(r_c.get('diycrate_secret_key') or b'', encoding='utf-8', errors='strict') or str(uuid.uuid4())
     if not r_c.exists('diycrate_secret_key'):
         r_c.set('diycrate_secret_key', diycrate_secret_key)
-    access_token, refresh_token = requests.post(remote_url, data={'access_token': access_token, 'diycrate_secret_key': diycrate_secret_key}, verify=False).json()
+    access_token, refresh_token = requests.post(remote_url, data={'access_token': str(access_token), 'diycrate_secret_key': str(diycrate_secret_key)}, verify=False).json()
     return access_token
 
 

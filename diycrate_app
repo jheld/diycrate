@@ -443,8 +443,8 @@ if __name__ == '__main__':
     conf_obj['box'] = {
         'directory': args.box_dir or conf_obj['box']['directory'],
         'authenticate_url': args.authenticate_url or 'https://localhost:8081/authenticate',
-        'authorization_url': args.authenticate_url or 'https://localhost:8081/auth_url',
-        'token_url': args.authenticate_url or 'https://localhost:8081/new_access'
+        'authorization_url': args.authorization_url or 'https://localhost:8081/auth_url',
+        'token_url': args.token_url or 'https://localhost:8081/new_access'
     }
     conf_obj.write(open(cloud_credentials_file_path, 'w'))
     BOX_DIR = os.path.expanduser(conf_obj['box']['directory'])

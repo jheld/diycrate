@@ -48,8 +48,9 @@ def auth_url():
     if not secret_keys:
         secret_keys = []
     else:
-        secret_keys = json.loads(secret_keys)
-    secret_keys.append(bottle.request.POST.get('diycrate_secret_key'))
+        secret_keys = json.loads(secret_keys.decode(encoding='utf-8', errors='strict'))
+    if bottle.request.POST.get('diycrate_secret_key') not in secret_keys:
+        secret_keys.append(str(bottle.request.POST.get('diycrate_secret_key')))
     r_c.set('secret_keys', json.dumps(secret_keys))
     return json.dumps([el.decode(encoding='utf-8', errors='strict') if isinstance(el, bytes) else el for el in bottle_app.oauth.authenticate(auth_code=bottle.request.POST.get('code'))])
 
@@ -61,8 +62,8 @@ def new_access():
     if not secret_keys:
         secret_keys = []
     else:
-        secret_keys = json.loads(secret_keys)
-    if bottle.request.query.diycrate_secret_key not in secret_keys:
+        secret_keys = json.loads(str(secret_keys, encoding='utf-8', errors='strict'))
+    if str(bottle.request.POST.get('diycrate_secret_key')) not in secret_keys:
         raise ValueError('No matching secret key; we are being secure!')
     return json.dumps([el.decode(encoding='utf-8', errors='strict') if isinstance(el, bytes) else el for el in bottle_app.oauth.refresh(bottle.request.POST.get('access_token'))])
 
@@ -135,4 +136,4 @@ if __name__ == '__main__':
     }
 
     conf_obj.write(open(cloud_credentials_file_path, 'w'))
-    bottle_app.run(server=SSLCherryPyServer, port=8081)
+    bottle_app.run(server=SSLCherryPyServer, port=8081, host='0.0.0.0')
