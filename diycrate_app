@@ -4,6 +4,7 @@ import configparser
 import json
 import logging
 import os
+import uuid
 import shutil
 import threading
 import time
@@ -24,7 +25,7 @@ from diycrate.file_operations import EventHandler, wm, in_moved_to, in_moved_fro
 from diycrate.gui import notify_user_with_gui
 from diycrate.item_queue_io import upload_queue_processor, download_queue_processor, download_queue_monitor, \
     upload_queue_monitor, download_queue, upload_queue
-from diycrate.oauth_utils import setup_oauth, store_tokens_callback
+from diycrate.oauth_utils import store_tokens_callback, setup_remote_oauth
 from diycrate.path_utils import re_walk
 
 crate_logger = logging.getLogger('diy_crate_logger')
@@ -313,7 +314,14 @@ def oauth_handler():
     assert bottle_app.csrf_token == bottle.request.GET['state']
     #  we actually store these values in redis as an explicit part of the callback, so we basically throw these away
     # access_token, refresh_token = bottle_app.oauth.authenticate(bottle.request.GET['code'])
-    bottle_app.oauth.authenticate(bottle.request.GET['code'])
+    # bottle_app.oauth.authenticate(bottle.request.GET['code'])
+    import requests
+    diycrate_secret_key = r_c.get('diycrate_secret_key') or str(uuid.uuid4())
+    if not r_c.exists('diycrate_secret_key'):
+        r_c.set('diycrate_secret_key', diycrate_secret_key)
+    access_token, refresh_token = requests.post(conf_obj['box']['authenticate_url'], data={'code': bottle.request.GET['code'], 'diycrate_secret_key': diycrate_secret_key}, verify=False).json()
+    store_tokens_callback(access_token, refresh_token)
+    bottle_app.oauth._update_current_tokens(access_token, refresh_token)
     start_cloud_threads(bottle_app.oauth)
 
     return 'OK'
@@ -327,7 +335,11 @@ def start_cloud_threads(client_oauth):
     client = Client(client_oauth)
     handler.oauth = client_oauth
     wm.add_watch(BOX_DIR, mask, rec=False)
-    box_folder = client.folder(folder_id='0').get()
+    try:
+        box_folder = client.folder(folder_id='0').get()
+    except exception.BoxAPIException as e:
+        r_c.delete('diy_crate.auth.access_token', 'diy_crate.auth.refresh_token')
+        raise e
     download_thread.daemon = True
     download_thread.start()
     upload_thread.daemon = True
@@ -366,9 +378,14 @@ class SSLCherryPyServer(ServerAdapter):
             server.stop()
 
 
-def oauth_dance(redis_client, conf, token_callback, auth_url='https://localhost:8080/'):
-    bottle_app.oauth = setup_oauth(redis_client, conf, token_callback)
-    auth_url, bottle_app.csrf_token = bottle_app.oauth.get_authorization_url(auth_url)
+def oauth_dance(redis_client, conf):
+    diycrate_secret_key = redis_client.get('diycrate_secret_key') or str(uuid.uuid4())
+    if not redis_client.exists('diycrate_secret_key'):
+        redis_client.set('diycrate_secret_key', diycrate_secret_key)
+    bottle_app.oauth = setup_remote_oauth(redis_client, conf)
+    import requests
+    auth_url, bottle_app.csrf_token = requests.get(conf['box']['authorization_url'], data={'redirect_url': 'https://localhost:8080/', }, verify=False).json()
+    # auth_url, bottle_app.csrf_token = bottle_app.oauth.get_authorization_url(auth_url)
     webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
 
 
@@ -382,23 +399,23 @@ if __name__ == '__main__':
         open(cloud_credentials_file_path, 'w').write('')
     conf_obj.read(cloud_credentials_file_path)
     arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument('--client_id', type=str, help='Client ID provided by {}'.format(cloud_provider_name),
-                            default='')
-    arg_parser.add_argument('--client_secret', type=str,
-                            help='Client Secret provided by {}'.format(cloud_provider_name), default='')
     arg_parser.add_argument('--box_dir', type=str, help='directory for the root of box', default='~/box')
     arg_parser.add_argument('--cacert_pem_path', type=str, help='filepath to where the cacert.pem is located',
                             default='')
     arg_parser.add_argument('--privkey_pem_path', type=str, help='filepath to where the privkey.pem is located',
                             default='')
+    arg_parser.add_argument('--authenticate_url', type=str, help='Full URL to perform remote Oauth2 authentication',
+                            default='')
+    arg_parser.add_argument('--token_url', type=str, help='Full URL to do remote Oauth2 token refresh/retrieve',
+                            default='')
+    arg_parser.add_argument('--authorization_url', type=str, help='Full URL to retrieve the '
+                                                                  'Oauth2-generated authorization url',
+                            default='')
+    arg_parser.add_argument('--port', type=int, help='local web server port')
     args = arg_parser.parse_args()
     had_oauth2 = conf_obj.has_section('oauth2')
-    if not had_oauth2:
-        conf_obj.add_section('oauth2')
-    conf_obj['oauth2'] = {
-        'client_id': args.client_id or conf_obj['oauth2']['client_id'],
-        'client_secret': args.client_secret or conf_obj['oauth2']['client_secret']
-    }
+    if had_oauth2:  # this was before we used the RemoteOauth2 workflow, so we don't want this info hanging around
+        conf_obj.remove_section('oauth2')
     if 'ssl' not in conf_obj:
         if not args.cacert_pem_path:
             raise ValueError('Need a valid cacert_pem_path')
@@ -421,25 +438,32 @@ if __name__ == '__main__':
         conf_obj.add_section('box')
 
     conf_obj['box'] = {
-        'directory': args.box_dir or conf_obj['box']['directory']
+        'directory': args.box_dir or conf_obj['box']['directory'],
+        'authenticate_url': args.authenticate_url or conf_obj['box'].get('authenticate_url',
+                                                                         'https://localhost:8081/authenticate'),
+        'authorization_url': args.authorization_url or conf_obj['box'].get('authorization_url',
+                                                                           'https://localhost:8081/auth_url'),
+        'token_url': args.token_url or conf_obj['box'].get('token_url', 'https://localhost:8081/new_access'),
+        'web_server_port': args.port or conf_obj['box'].get('web_server_port', 8080),
     }
+    web_server_port = conf_obj['box']['web_server_port']
     conf_obj.write(open(cloud_credentials_file_path, 'w'))
     BOX_DIR = os.path.expanduser(conf_obj['box']['directory'])
     if not os.path.isdir(BOX_DIR):
         os.mkdir(BOX_DIR)
-    if not r_c.exists('diy_crate.auth.access_token') and not r_c.exists('diy_crate.auth.refresh_token'):
-        oauth_dance(redis_client=r_c, conf=conf_obj, token_callback=store_tokens_callback)
+    if not (r_c.exists('diy_crate.auth.access_token') and r_c.exists('diy_crate.auth.refresh_token')):
+        oauth_dance(redis_client=r_c, conf=conf_obj)
     else:
         try:
-            oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
+            oauth = setup_remote_oauth(r_c)
             start_cloud_threads(oauth)
         except exception.BoxOAuthException:
             r_c.delete(('diy_crate.auth.access_token', 'diy_crate.auth.refresh_token', ))
-            oauth_dance(redis_client=r_c, conf=conf_obj, token_callback=store_tokens_callback)
+            oauth_dance(redis_client=r_c, conf=conf_obj)
             bottle_app.run(server=SSLCherryPyServer)
     notifier.start()
     # notifier_thread = threading.Thread(target=notifier.loop)
     # notifier_thread.daemon = True
     # notifier_thread.start()
-    if not r_c.exists('diy_crate.auth.access_token') and not r_c.exists('diy_crate.auth.refresh_token'):
-        bottle_app.run(server=SSLCherryPyServer)
+    if not (r_c.exists('diy_crate.auth.access_token') and r_c.exists('diy_crate.auth.refresh_token')):
+        bottle_app.run(server=SSLCherryPyServer, port=web_server_port, host='0.0.0.0')

@@ -36,7 +36,7 @@ packages = ['bottle==0.12.9',
 
 setup(
     name="diycrate",
-    version="0.2.10.2",
+    version="0.2.10.3",
     author="Jason Held",
     author_email="jasonsheld@gmail.com",
     description="box.com for linux -- unofficial, based on python SDK",
