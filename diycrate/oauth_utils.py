@@ -1,10 +1,10 @@
 import uuid
+import webbrowser
 
 from boxsdk import OAuth2
 from boxsdk.auth import RemoteOAuth2
 
 from diycrate.cache_utils import r_c
-from diycrate.file_operations import conf_obj
 
 
 def setup_oauth(cache_client, conf_object, callback):
@@ -32,11 +32,15 @@ def get_access_token(access_token):
     :return:
     """
     import requests
-    remote_url = conf_obj['box']['token_url']
+    from diycrate.file_operations import conf_obj
+    conf_object = conf_obj
+    remote_url = conf_object['box']['token_url']
     diycrate_secret_key = str(r_c.get('diycrate_secret_key') or b'', encoding='utf-8', errors='strict') or str(uuid.uuid4())
     if not r_c.exists('diycrate_secret_key'):
         r_c.set('diycrate_secret_key', diycrate_secret_key)
     access_token, refresh_token = requests.post(remote_url, data={'access_token': str(access_token), 'diycrate_secret_key': str(diycrate_secret_key)}, verify=False).json()
+    r_c.set('diy_crate.auth.access_token', access_token)
+    r_c.set('diy_crate.auth.refresh_token', refresh_token)
     return access_token
 
 
@@ -69,3 +73,14 @@ def store_tokens_callback(access_token, refresh_token):
     assert refresh_token
     r_c.set('diy_crate.auth.access_token', access_token)
     r_c.set('diy_crate.auth.refresh_token', refresh_token)
+
+
+def oauth_dance(redis_client, conf, bottle_app):
+    diycrate_secret_key = redis_client.get('diycrate_secret_key') or str(uuid.uuid4())
+    if not redis_client.exists('diycrate_secret_key'):
+        redis_client.set('diycrate_secret_key', diycrate_secret_key)
+    bottle_app.oauth = setup_remote_oauth(redis_client)
+    import requests
+    auth_url, bottle_app.csrf_token = requests.get(conf['box']['authorization_url'], data={'redirect_url': 'https://localhost:8080/', }, verify=False).json()
+    # auth_url, bottle_app.csrf_token = bottle_app.oauth.get_authorization_url(auth_url)
+    webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth

@@ -15,6 +15,7 @@ from boxsdk.object.folder import Folder
 from requests import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
+from diycrate.oauth_utils import oauth_dance
 from diycrate.cache_utils import redis_key, redis_get, r_c
 
 
@@ -61,6 +62,7 @@ class EventHandler(pyinotify.ProcessEvent):
         self.wait_time = 1
         self.oauth = kargs.get('oauth')
         self.operations_thread = threading.Thread(target=self.operation_coalesce)
+        self.bottle_app = kargs.get('bottle_app')
         self.operations_thread.daemon = True
         self.operations_thread.start()
 
@@ -71,12 +73,29 @@ class EventHandler(pyinotify.ProcessEvent):
         """
         while True:
             time.sleep(self.wait_time)
+            client = Client(self.oauth)
             cur_num_operations = len(self.operations)
-            operations_to_perform = self.operations[:cur_num_operations]  # keep a local copy for this loop-run
-            # operations list could have changed since the previous two instructions
-            self.operations = self.operations[cur_num_operations:] if len(self.operations) > cur_num_operations else []
-            for operation in operations_to_perform:
-                self.process_event(*operation)
+            if cur_num_operations:
+                while True:
+                    try:
+                        # in general, the refresh will get called by the session
+                        # but, if the access_token is out of date, we'll need to re-do the dance
+                        client.folder(folder_id='0').get()
+                        break  # sweet, we should have valid oauth access, now
+                    except (BoxAPIException, AttributeError):
+                        # might as well get a new set of tokens
+                        r_c.delete(('diy_crate.auth.access_token', 'diy_crate.auth.refresh_token',))
+                        oauth_dance(r_c, conf_obj, self.bottle_app)
+                        # wait until the oauth dance has completed
+                        while not (r_c.get('diy_crate.auth.access_token') and r_c.get('diy_crate.auth.refresh_token')):
+                            time.sleep(15)
+                operations_to_perform = self.operations[:cur_num_operations]  # keep a local copy for this loop-run
+                # operations list could have changed since the previous two instructions
+                # pycharm complained that I was re-assigning the instance variable outside of the __init__.
+                self.operations.clear()
+                self.operations.extend(self.operations[cur_num_operations:] if len(self.operations) > cur_num_operations else [])
+                for operation in operations_to_perform:
+                    self.process_event(*operation)
 
     @staticmethod
     def get_folder(client, folder_id):

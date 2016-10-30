@@ -60,7 +60,7 @@ def upload_queue_processor():
                                                                         the_trace=traceback.format_exc()))
                     if e.status == 409:
                         crate_logger.debug('Apparently Box says this item already exists...'
-                                           'and we were trying to create it. Need to handle this better')
+                                           'and we were trying to create it. Need to handle this better. message: {}'.format(e.message))
                         break
                 except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
                     time.sleep(3)
