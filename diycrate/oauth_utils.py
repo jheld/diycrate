@@ -1,7 +1,8 @@
+import time
 import uuid
 import webbrowser
 
-from boxsdk import OAuth2
+from boxsdk import OAuth2, Client, exception
 from boxsdk.auth import RemoteOAuth2
 
 from diycrate.cache_utils import r_c
@@ -75,12 +76,32 @@ def store_tokens_callback(access_token, refresh_token):
     r_c.set('diy_crate.auth.refresh_token', refresh_token)
 
 
-def oauth_dance(redis_client, conf, bottle_app):
+def oauth_dance(redis_client, conf, bottle_app, file_event_handler):
     diycrate_secret_key = redis_client.get('diycrate_secret_key') or str(uuid.uuid4())
     if not redis_client.exists('diycrate_secret_key'):
         redis_client.set('diycrate_secret_key', diycrate_secret_key)
-    bottle_app.oauth = setup_remote_oauth(redis_client)
+    bottle_app.oauth = file_event_handler.oauth = setup_remote_oauth(redis_client)
     import requests
     auth_url, bottle_app.csrf_token = requests.get(conf['box']['authorization_url'], data={'redirect_url': 'https://localhost:8080/', }, verify=False).json()
     # auth_url, bottle_app.csrf_token = bottle_app.oauth.get_authorization_url(auth_url)
     webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
+
+
+def oauth_dance_retry(oauth_instance, cache_client, oauth_meta_info, conf_obj, bottle_app, file_event_handler, oauth_lock_instance):
+    with oauth_lock_instance:
+        temp_client = Client(oauth_instance)
+        while True:
+            try:
+                temp_client.folder(folder_id='0').get()
+                break  # sweet, we should have valid oauth access, now
+            except (exception.BoxAPIException, AttributeError):
+                try:
+                    oauth_meta_info['diy_crate.auth.oauth_dance_retry'] = True
+                    # might as well get a new set of tokens
+                    cache_client.delete('diy_crate.auth.access_token', 'diy_crate.auth.refresh_token',)
+                    oauth_dance(cache_client, conf_obj, bottle_app, file_event_handler)
+                    # wait until the oauth dance has completed
+                    while not (cache_client.get('diy_crate.auth.access_token') and cache_client.get('diy_crate.auth.refresh_token')):
+                        time.sleep(15)
+                finally:
+                    oauth_meta_info.pop('diy_crate.auth.oauth_dance_retry')
