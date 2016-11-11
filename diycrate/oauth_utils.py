@@ -2,10 +2,28 @@ import time
 import uuid
 import webbrowser
 
+
+import requests
+
 from boxsdk import OAuth2, Client, exception
 from boxsdk.auth import RemoteOAuth2
 
 from diycrate.cache_utils import r_c
+
+
+
+import logging
+from logging import handlers
+crate_logger = logging.getLogger('diy_crate_logger')
+crate_logger.setLevel(logging.DEBUG)
+
+l_handler = handlers.SysLogHandler(address='/dev/log')
+
+crate_logger.addHandler(l_handler)
+
+log_format = 'diycrate' + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'
+log_format = logging.Formatter(log_format)
+l_handler.setFormatter(log_format)
 
 
 def setup_oauth(cache_client, conf_object, callback):
@@ -32,7 +50,6 @@ def get_access_token(access_token):
     :param access_token: token we will try to refresh/get anew
     :return:
     """
-    import requests
     from diycrate.file_operations import conf_obj
     conf_object = conf_obj
     remote_url = conf_object['box']['token_url']
@@ -88,7 +105,9 @@ def oauth_dance(redis_client, conf, bottle_app, file_event_handler):
 
 
 def oauth_dance_retry(oauth_instance, cache_client, oauth_meta_info, conf_obj, bottle_app, file_event_handler, oauth_lock_instance):
+    crate_logger.debug('entering retry function')
     with oauth_lock_instance:
+        crate_logger.debug('entering retry lock')
         temp_client = Client(oauth_instance)
         while True:
             try:
@@ -103,5 +122,10 @@ def oauth_dance_retry(oauth_instance, cache_client, oauth_meta_info, conf_obj, b
                     # wait until the oauth dance has completed
                     while not (cache_client.get('diy_crate.auth.access_token') and cache_client.get('diy_crate.auth.refresh_token')):
                         time.sleep(15)
+                        crate_logger.info('Just slept, waiting on the oauth dance')
+
                 finally:
                     oauth_meta_info.pop('diy_crate.auth.oauth_dance_retry')
+            except requests.exceptions.ConnectionError:
+                time.sleep(5)
+                crate_logger.warn('had a connection error...sleeping for 5')

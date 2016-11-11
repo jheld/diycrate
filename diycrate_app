@@ -72,9 +72,10 @@ def long_poll_event_listener(oauth_meta_info, oauth_lock_instance):
     Receive and process remote cloud item events in real-time
     :return:
     """
-    client = Client(oauth=handler.oauth)
     while True:
         try:
+            client = Client(oauth=handler.oauth)
+            client.folder('0').get()
             stream_position = client.events().get_latest_stream_position()
             for event in client.events().generate_events_with_long_polling(stream_position=stream_position):
                 crate_logger.debug('{} happened!'.format(json.dumps(event)))
@@ -282,8 +283,7 @@ def long_poll_event_listener(oauth_meta_info, oauth_lock_instance):
                 elif event['event_type'] == 'ITEM_DOWNLOAD':
                     pass
         except (exception.BoxAPIException, AttributeError):
-            oauth_instance = handler.oauth
-            oauth_dance_retry(oauth_instance, r_c, oauth_meta_info, conf_obj, bottle_app, handler, oauth_lock_instance)
+            oauth_dance_retry(handler.oauth, r_c, oauth_meta_info, conf_obj, bottle_app, handler, oauth_lock_instance)
         except Exception:
             crate_logger.debug(traceback.format_exc())
 
@@ -346,10 +346,20 @@ def oauth_handler():
     store_tokens_callback(access_token, refresh_token)
     bottle_app.oauth._update_current_tokens(access_token, refresh_token)
     if not getattr(bottle_app, 'started_cloud_threads', False):
-        crate_logger.warn('apparently bottle_app had not started the cloud threads')
         start_cloud_threads(bottle_app.oauth, oauth_lock)
         bottle_app.started_cloud_threads = True
     return 'OK'
+
+
+def box_oauth_watching():
+    while True:
+        try:
+            oauth_dance_retry(oauth_instance=oauth, conf_obj=conf_obj, bottle_app=bottle_app, cache_client=r_c, file_event_handler=handler, oauth_lock_instance=oauth_lock, oauth_meta_info=oauth_meta)
+        except Exception:
+            pass
+        time.sleep(30)
+box_oauth_watching_thread = threading.Thread(target=box_oauth_watching)
+box_oauth_watching_thread.daemon = True
 
 
 def start_cloud_threads(client_oauth, oauth_lock_instance):
@@ -369,6 +379,8 @@ def start_cloud_threads(client_oauth, oauth_lock_instance):
     if not upload_mon_thread.is_alive():
         upload_thread.daemon = True
         upload_thread.start()
+    if not box_oauth_watching_thread.is_alive():
+        box_oauth_watching_thread.start()
     # local trash can
     wm.add_watch(trash_directory, mask=in_moved_to | in_moved_from)
     if not long_poll_thread.is_alive():  # start before doing anything else
@@ -377,7 +389,7 @@ def start_cloud_threads(client_oauth, oauth_lock_instance):
     if not walk_thread.is_alive():
         walk_thread._args = (BOX_DIR, box_folder, client, client_oauth, oauth_meta, bottle_app, handler, oauth_lock_instance)
         walk_thread.start()
-    
+
 
 
 # Create our own sub-class of Bottle's ServerAdapter
@@ -405,6 +417,7 @@ class SSLCherryPyServer(ServerAdapter):
             walk_thread.join()
             long_poll_thread.join()
             notifier.join()
+            box_oauth_watching_thread.join()
         finally:
             server.stop()
 
@@ -477,7 +490,6 @@ if __name__ == '__main__':
         try:
             oauth = setup_remote_oauth(r_c)
             start_cloud_threads(oauth, oauth_lock)
-            crate_logger.warn('setting bottle_py to have started the cloud threads')
             bottle_app.started_cloud_threads = True
         except exception.BoxOAuthException:
             r_c.delete('diy_crate.auth.access_token', 'diy_crate.auth.refresh_token')
