@@ -15,7 +15,7 @@ from diycrate.cache_utils import r_c
 import logging
 from logging import handlers
 crate_logger = logging.getLogger('diy_crate_logger')
-crate_logger.setLevel(logging.DEBUG)
+crate_logger.setLevel(logging.INFO)
 
 l_handler = handlers.SysLogHandler(address='/dev/log')
 
