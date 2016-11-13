@@ -105,9 +105,7 @@ def oauth_dance(redis_client, conf, bottle_app, file_event_handler):
 
 
 def oauth_dance_retry(oauth_instance, cache_client, oauth_meta_info, conf_obj, bottle_app, file_event_handler, oauth_lock_instance):
-    crate_logger.debug('entering retry function')
     with oauth_lock_instance:
-        crate_logger.debug('entering retry lock')
         temp_client = Client(oauth_instance)
         while True:
             try:
