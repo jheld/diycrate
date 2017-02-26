@@ -14,7 +14,7 @@ from logging import handlers
 
 import bottle
 import pyinotify
-from bottle import ServerAdapter
+from bottle import ServerAdapter, run
 from boxsdk import Client, exception
 from cherrypy import wsgiserver
 from cherrypy.wsgiserver import ssl_builtin
@@ -362,7 +362,7 @@ box_oauth_watching_thread = threading.Thread(target=box_oauth_watching)
 box_oauth_watching_thread.daemon = True
 
 
-def start_cloud_threads(client_oauth, oauth_lock_instance):
+def start_cloud_threads(client_oauth, oauth_lock_instance, bottle_thread=None):
     """
 
     :return:
@@ -371,7 +371,7 @@ def start_cloud_threads(client_oauth, oauth_lock_instance):
     handler.oauth = client_oauth
     bottle_app.oauth = client_oauth
     wm.add_watch(BOX_DIR, mask, rec=False)
-    oauth_dance_retry(client_oauth, r_c, oauth_meta, conf_obj, bottle_app, handler, oauth_lock_instance)
+    oauth_dance_retry(client_oauth, r_c, oauth_meta, conf_obj, bottle_app, handler, oauth_lock_instance, bottle_thread=bottle_thread)
     box_folder = client.folder(folder_id='0').get()
     if not download_thread.is_alive():
         download_thread.daemon = True
@@ -480,6 +480,9 @@ if __name__ == '__main__':
         'web_server_port': args.port or conf_obj['box'].get('web_server_port', 8080),
     }
     web_server_port = conf_obj['box']['web_server_port']
+    bottle_thread = threading.Thread(target=bottle_app.run, kwargs=dict(server=SSLCherryPyServer, port=web_server_port,
+                                                             host='0.0.0.0'))
+    bottle_thread.daemon = True
     conf_obj.write(open(cloud_credentials_file_path, 'w'))
     BOX_DIR = os.path.expanduser(conf_obj['box']['directory'])
     if not os.path.isdir(BOX_DIR):
@@ -489,7 +492,7 @@ if __name__ == '__main__':
     else:
         try:
             oauth = setup_remote_oauth(r_c)
-            start_cloud_threads(oauth, oauth_lock)
+            start_cloud_threads(oauth, oauth_lock, bottle_thread=bottle_thread)
             bottle_app.started_cloud_threads = True
         except exception.BoxOAuthException:
             r_c.delete('diy_crate.auth.access_token', 'diy_crate.auth.refresh_token')
@@ -498,4 +501,5 @@ if __name__ == '__main__':
     # notifier_thread = threading.Thread(target=notifier.loop)
     # notifier_thread.daemon = True
     # notifier_thread.start()
-    bottle_app.run(server=SSLCherryPyServer, port=web_server_port, host='0.0.0.0')
+    if bottle_thread and not bottle_thread.is_alive():
+        bottle_thread.start()
