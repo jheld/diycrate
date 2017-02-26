@@ -5,9 +5,14 @@ import logging
 from logging import handlers
 from functools import partial
 
-from boxsdk.exception import BoxAPIException
 
-from diycrate.file_operations import wm, mask, BOX_DIR
+import requests
+
+from boxsdk.exception import BoxAPIException
+from boxsdk.client import Client
+
+from diycrate.oauth_utils import oauth_dance, oauth_dance_retry
+from diycrate.file_operations import wm, mask, BOX_DIR, conf_obj
 from diycrate.item_queue_io import download_queue, upload_queue
 from diycrate.cache_utils import redis_key, r_c, redis_set
 
@@ -24,7 +29,7 @@ log_format = logging.Formatter(log_format)
 l_handler.setFormatter(log_format)
 
 
-def walk_and_notify_and_download_tree(path, box_folder, client, oauth_obj, p_id=None):
+def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_info, p_id=None, bottle_app=None, file_event_handler=None, oauth_lock_instance=None):
     """
     Walk the path recursively and add watcher and create the path.
     :param path:
@@ -37,7 +42,16 @@ def walk_and_notify_and_download_tree(path, box_folder, client, oauth_obj, p_id=
     if os.path.isdir(path):
         wm.add_watch(path, mask, rec=True, auto_add=True)
         local_files = os.listdir(path)
-    b_folder = client.folder(folder_id=box_folder['id']).get()
+    oauth_dance_retry(oauth_obj, r_c, oauth_meta_info, conf_obj, bottle_app, file_event_handler=file_event_handler, oauth_lock_instance=oauth_lock_instance)
+    client = Client(bottle_app.oauth)
+    while True:
+        try:
+            b_folder = client.folder(folder_id=box_folder['id']).get()
+            break
+        except requests.exceptions.ConnectionError:
+            crate_logger.warn('Moving on with sleep, but: {}'.format(traceback.format_exc()))
+            time.sleep(5)
+
     num_entries_in_folder = b_folder['item_collection']['total_count']
     limit = 100
     for offset in range(0, num_entries_in_folder, limit):
@@ -52,7 +66,13 @@ def walk_and_notify_and_download_tree(path, box_folder, client, oauth_obj, p_id=
                               oauth_obj])
     ids_in_folder = []
     for offset in range(0, num_entries_in_folder, limit):
-        for box_item in b_folder.get_items(limit=limit, offset=offset):
+        while True:
+            try:
+                folder_items = [item for item in b_folder.get_items(limit=limit, offset=offset)]
+                break
+            except Exception:
+                time.sleep(5)
+        for box_item in folder_items:
             ids_in_folder.append(box_item['id'])
             if box_item['name'] in local_files:
                 local_files.remove(box_item['name'])
@@ -71,8 +91,8 @@ def walk_and_notify_and_download_tree(path, box_folder, client, oauth_obj, p_id=
                                   folder=os.path.dirname(local_path))
                         walk_and_notify_and_download_tree(local_path,
                                                           client.folder(folder_id=box_item['id']).get(),
-                                                          client, oauth_obj,
-                                                          p_id=box_folder['id'])
+                                                          oauth_obj, oauth_meta_info,
+                                                          p_id=box_folder['id'], bottle_app=bottle_app, file_event_handler=file_event_handler, oauth_lock_instance=oauth_lock_instance)
                         break
                     except BoxAPIException as e:
                         crate_logger.debug(traceback.format_exc())
@@ -106,15 +126,16 @@ def walk_and_notify_and_download_tree(path, box_folder, client, oauth_obj, p_id=
               sub_ids=ids_in_folder, parent_id=p_id)
 
 
-def re_walk(path, box_folder, client, oauth_obj):
+def re_walk(path, box_folder, client, oauth_obj, oauth_meta_info, bottle_app=None, file_event_handler=None, oauth_lock_instance=None):
     """
 
     :param path:
     :param box_folder:
     :param client:
     :param oauth_obj:
+    :param bottle_app:
     :return:
     """
     while True:
-        walk_and_notify_and_download_tree(path, box_folder, client, oauth_obj)
+        walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_info, bottle_app=bottle_app, file_event_handler=file_event_handler, oauth_lock_instance=oauth_lock_instance)
         time.sleep(3600)  # once an hour we walk the tree

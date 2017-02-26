@@ -15,6 +15,7 @@ from boxsdk.object.folder import Folder
 from requests import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
+from diycrate.oauth_utils import oauth_dance, oauth_dance_retry
 from diycrate.cache_utils import redis_key, redis_get, r_c
 
 
@@ -61,6 +62,9 @@ class EventHandler(pyinotify.ProcessEvent):
         self.wait_time = 1
         self.oauth = kargs.get('oauth')
         self.operations_thread = threading.Thread(target=self.operation_coalesce)
+        self.bottle_app = kargs.get('bottle_app')
+        self.oauth_meta_info = kargs.get('oauth_meta_info')
+        self.oauth_lock_instance = kargs.get('oauth_lock_instance')
         self.operations_thread.daemon = True
         self.operations_thread.start()
 
@@ -72,11 +76,15 @@ class EventHandler(pyinotify.ProcessEvent):
         while True:
             time.sleep(self.wait_time)
             cur_num_operations = len(self.operations)
-            operations_to_perform = self.operations[:cur_num_operations]  # keep a local copy for this loop-run
-            # operations list could have changed since the previous two instructions
-            self.operations = self.operations[cur_num_operations:] if len(self.operations) > cur_num_operations else []
-            for operation in operations_to_perform:
-                self.process_event(*operation)
+            if cur_num_operations:
+                oauth_dance_retry(bottle_app=self.bottle_app, oauth_instance=self.oauth, oauth_meta_info=self.oauth_meta_info, conf_obj=conf_obj, cache_client=r_c, file_event_handler=self, oauth_lock_instance=self.oauth_lock_instance)
+                operations_to_perform = self.operations[:cur_num_operations]  # keep a local copy for this loop-run
+                # operations list could have changed since the previous two instructions
+                # pycharm complained that I was re-assigning the instance variable outside of the __init__.
+                self.operations.clear()
+                self.operations.extend(self.operations[cur_num_operations:] if len(self.operations) > cur_num_operations else [])
+                for operation in operations_to_perform:
+                    self.process_event(*operation)
 
     @staticmethod
     def get_folder(client, folder_id):
