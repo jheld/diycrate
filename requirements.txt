@@ -1,7 +1,7 @@
-bottle==0.12.9
-boxsdk==1.5.3
+bottle>=0.12.9,<=0.13
+boxsdk>=1.5.5,<2
 decorator==4.0.9
-enum34==1.1.2
+enum34
 ipython>=5
 ipython-genutils==0.1.0
 path.py==8.1.2
@@ -9,10 +9,10 @@ pexpect==4.0.1
 pickleshare==0.6
 ptyprocess==0.5.1
 pyinotify==0.9.6
-redis==2.10.5
-requests==2.9.1
-requests-toolbelt==0.6.0
+redis>=2.10.5,<4
+requests==2.14.2
+requests-toolbelt>=0.6.0
 simplegeneric==0.8.1
-six==1.10.0
-pyopenssl==16.0.0
-cherrypy==5.1.0
+six>=1.10.0
+pyopenssl>=16.0.0
+cherrypy>=13.0.0

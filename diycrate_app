@@ -16,8 +16,8 @@ import bottle
 import pyinotify
 from bottle import ServerAdapter, run
 from boxsdk import Client, exception
-from cherrypy import wsgiserver
-from cherrypy.wsgiserver import ssl_builtin
+from cheroot import wsgi as wsgiserver
+from cheroot.ssl.builtin import BuiltinSSLAdapter
 
 from diycrate.cache_utils import redis_key, redis_get, r_c, redis_set
 from diycrate.file_operations import EventHandler, wm, in_moved_to, in_moved_from, mask
@@ -372,6 +372,12 @@ def start_cloud_threads(client_oauth, oauth_lock_instance, bottle_thread=None):
     bottle_app.oauth = client_oauth
     wm.add_watch(BOX_DIR, mask, rec=False)
     oauth_dance_retry(client_oauth, r_c, oauth_meta, conf_obj, bottle_app, handler, oauth_lock_instance, bottle_thread=bottle_thread)
+    client.auth._access_token = r_c.get('diy_crate.auth.access_token')
+    client.auth._refresh_token = r_c.get('diy_crate.auth.refresh_token')
+    if client.auth._access_token:
+        client.auth._access_token = client.auth._access_token.decode(encoding='utf-8')
+    if client.auth._refresh_token:
+        client.auth._refresh_token = client.auth._refresh_token.decode(encoding='utf-8')
     box_folder = client.folder(folder_id='0').get()
     if not download_thread.is_alive():
         download_thread.daemon = True
@@ -406,11 +412,11 @@ class SSLCherryPyServer(ServerAdapter):
         :param server_handler: originating server type
         :type server_handler:
         """
-        server = wsgiserver.CherryPyWSGIServer((self.host, self.port), server_handler)
+        server = wsgiserver.Server((self.host, self.port), server_handler)
         # Uses the following github page's recommendation for setting up the cert:
         # https://github.com/nickbabcock/bottle-ssl
-        server.ssl_adapter = ssl_builtin.BuiltinSSLAdapter(conf_obj['ssl']['cacert_pem_path'],
-                                                           conf_obj['ssl']['privkey_pem_path'])
+        server.ssl_adapter = BuiltinSSLAdapter(conf_obj['ssl']['cacert_pem_path'],
+                                               conf_obj['ssl']['privkey_pem_path'])
         try:
             server.start()
         except KeyboardInterrupt:
