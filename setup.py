@@ -17,26 +17,25 @@ def read(file_name):
     return open(os.path.join(os.path.dirname(__file__), file_name)).read()
 
 
-packages = ['bottle==0.12.9',
-            'boxsdk==1.5.3',
+packages = ['bottle>=0.12.9,<0.13',
+            'boxsdk>=1.5.5,<2',
             'decorator==4.0.9',
-            'enum34==1.1.2',
             'ipython>=5',
             'path.py==8.1.2',
             'pexpect==4.0.1',
             'ptyprocess==0.5.1',
             'pyinotify==0.9.6',
-            'redis==2.10.5',
-            'requests==2.9.1',
-            'requests-toolbelt==0.6.0',
+            'redis>=2.10.5,<4',
+            'requests==2.14.2',
+            'requests-toolbelt>=0.6.0',
             'simplegeneric==0.8.1',
-            'six==1.10.0',
-            'pyopenssl==16.0.0',
-            'cherrypy==5.1.0']
+            'six>=1.10.0',
+            'pyopenssl>=16.0.0',
+            'cherrypy>=13.0.0']
 
 setup(
     name="diycrate",
-    version="0.2.10.4",
+    version="0.2.10.5",
     author="Jason Held",
     author_email="jasonsheld@gmail.com",
     description="box.com for linux -- unofficial, based on python SDK",
@@ -66,6 +65,6 @@ setup(
         'Environment :: Console',
         'Environment :: Web Environment',
         'Intended Audience :: End Users/Desktop',
-        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
     ],
 )

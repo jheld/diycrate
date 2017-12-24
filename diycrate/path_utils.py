@@ -44,12 +44,18 @@ def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_in
         local_files = os.listdir(path)
     oauth_dance_retry(oauth_obj, r_c, oauth_meta_info, conf_obj, bottle_app, file_event_handler=file_event_handler, oauth_lock_instance=oauth_lock_instance)
     client = Client(bottle_app.oauth)
+    client.auth._access_token = r_c.get('diy_crate.auth.access_token')
+    client.auth._refresh_token = r_c.get('diy_crate.auth.refresh_token')
+    if client.auth._access_token:
+        client.auth._access_token = client.auth._access_token.decode(encoding='utf-8')
+    if client.auth._refresh_token:
+        client.auth._refresh_token = client.auth._refresh_token.decode(encoding='utf-8')
     while True:
         try:
             b_folder = client.folder(folder_id=box_folder['id']).get()
             break
         except requests.exceptions.ConnectionError:
-            crate_logger.warn('Moving on with sleep, but: {}'.format(traceback.format_exc()))
+            crate_logger.warning('Moving on with sleep, but: {}'.format(traceback.format_exc()))
             time.sleep(5)
 
     num_entries_in_folder = b_folder['item_collection']['total_count']
