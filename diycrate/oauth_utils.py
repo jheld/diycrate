@@ -60,14 +60,13 @@ def get_access_token(access_token):
     conf_object = conf_obj
     remote_url = conf_object['box']['token_url']
     refresh_token = r_c.get('diy_crate.auth.refresh_token')
-    # if refresh_token and access_token:
-    #     return access_token
-    diycrate_secret_key = str(r_c.get('diycrate_secret_key') or b'', encoding='utf-8', errors='strict') or str(uuid.uuid4())
-    if not r_c.exists('diycrate_secret_key'):
-        r_c.set('diycrate_secret_key', diycrate_secret_key)
-    access_token, refresh_token = requests.post(remote_url, data={'refresh_token': refresh_token.decode('utf-8') if refresh_token else refresh_token,
-                                                                  'access_token': access_token.decode('utf-8') if access_token else access_token,
-                                                                  'diycrate_secret_key': str(diycrate_secret_key)},
+    access_token, refresh_token = requests.post(remote_url,
+                                                data={
+                                                    'refresh_token': refresh_token.decode(
+                                                        'utf-8') if refresh_token else refresh_token,
+                                                    'access_token': access_token.decode(
+                                                        'utf-8') if access_token else access_token,
+                                                },
                                                 verify=False).json()
     r_c.set('diy_crate.auth.access_token', access_token, 60*60)
     r_c.set('diy_crate.auth.refresh_token', refresh_token, 60*60*30)
@@ -108,9 +107,6 @@ def store_tokens_callback(access_token, refresh_token):
 
 
 def oauth_dance(redis_client, conf, bottle_app, file_event_handler, bottle_thread=None):
-    diycrate_secret_key = redis_client.get('diycrate_secret_key') or str(uuid.uuid4())
-    if not redis_client.exists('diycrate_secret_key'):
-        redis_client.set('diycrate_secret_key', diycrate_secret_key)
     bottle_app.oauth = file_event_handler.oauth = setup_remote_oauth(redis_client)
     import requests
     auth_url, bottle_app.csrf_token = requests.get(conf['box']['authorization_url'], data={'redirect_url': 'https://localhost:8080/', }, verify=False).json()

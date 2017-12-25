@@ -339,10 +339,7 @@ def oauth_handler():
     # access_token, refresh_token = bottle_app.oauth.authenticate(bottle.request.GET['code'])
     # bottle_app.oauth.authenticate(bottle.request.GET['code'])
     import requests
-    diycrate_secret_key = r_c.get('diycrate_secret_key') or str(uuid.uuid4())
-    if not r_c.exists('diycrate_secret_key'):
-        r_c.set('diycrate_secret_key', diycrate_secret_key)
-    access_token, refresh_token = requests.post(conf_obj['box']['authenticate_url'], data={'code': bottle.request.GET['code'], 'diycrate_secret_key': diycrate_secret_key}, verify=False).json()
+    access_token, refresh_token = requests.post(conf_obj['box']['authenticate_url'], data={'code': bottle.request.GET['code'], }, verify=False).json()
     store_tokens_callback(access_token, refresh_token)
     bottle_app.oauth._update_current_tokens(access_token, refresh_token)
     if not getattr(bottle_app, 'started_cloud_threads', False):
@@ -358,6 +355,8 @@ def box_oauth_watching():
         except Exception:
             pass
         time.sleep(30)
+
+
 box_oauth_watching_thread = threading.Thread(target=box_oauth_watching)
 box_oauth_watching_thread.daemon = True
 

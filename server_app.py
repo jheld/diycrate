@@ -52,14 +52,6 @@ def auth_url():
     :return:
     """
     bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
-    secret_keys = r_c.get('secret_keys')
-    if not secret_keys:
-        secret_keys = []
-    else:
-        secret_keys = json.loads(secret_keys.decode(encoding='utf-8', errors='strict'))
-    if bottle.request.POST.get('diycrate_secret_key') not in secret_keys:
-        secret_keys.append(str(bottle.request.POST.get('diycrate_secret_key')))
-    r_c.set('secret_keys', json.dumps(secret_keys))
     auth_code = bottle.request.POST.get('code')
     return json.dumps([el.decode(encoding='utf-8', errors='strict')
                        if isinstance(el, bytes) else el
@@ -77,13 +69,6 @@ def new_access():
     refresh_token = bottle.request.POST.get('refresh_token')
     bottle_app.oauth._access_token = str(access_token_to_refresh)
     bottle_app.oauth._refresh_token = str(refresh_token)
-    secret_keys = r_c.get('secret_keys')
-    if not secret_keys:
-        secret_keys = []
-    else:
-        secret_keys = json.loads(str(secret_keys, encoding='utf-8', errors='strict'))
-    if str(bottle.request.POST.get('diycrate_secret_key')) not in secret_keys:
-        raise ValueError('No matching secret key; we are being secure!')
     refresh_response = bottle_app.oauth.refresh(access_token_to_refresh)
     str_response = [el.decode(encoding='utf-8', errors='strict') if isinstance(el, bytes) else el
                     for el in refresh_response]
