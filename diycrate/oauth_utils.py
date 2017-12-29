@@ -68,8 +68,8 @@ def get_access_token(access_token):
                                                         'utf-8') if access_token else access_token,
                                                 },
                                                 verify=False).json()
-    r_c.set('diy_crate.auth.access_token', access_token, 60*60)
-    r_c.set('diy_crate.auth.refresh_token', refresh_token, 60*60*30)
+    r_c.set('diy_crate.auth.access_token', access_token)
+    r_c.set('diy_crate.auth.refresh_token', refresh_token)
     print(access_token, refresh_token)
     return access_token
 
