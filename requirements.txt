@@ -10,7 +10,7 @@ pickleshare==0.6
 ptyprocess==0.5.1
 pyinotify==0.9.6
 redis>=2.10.5,<4
-requests==2.14.2
+requests==2.20.0
 requests-toolbelt>=0.6.0
 simplegeneric==0.8.1
 six>=1.10.0
