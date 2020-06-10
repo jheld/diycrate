@@ -4,7 +4,6 @@ import threading
 import logging
 import time
 import traceback
-from logging import handlers
 from functools import partial
 
 import pyinotify
@@ -15,20 +14,12 @@ from boxsdk.object.folder import Folder
 from requests import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
-from diycrate.oauth_utils import oauth_dance, oauth_dance_retry
+from diycrate.oauth_utils import oauth_dance_retry
 from diycrate.cache_utils import redis_key, redis_get, r_c
+from diycrate.log_utils import setup_logger
+setup_logger()
 
-
-crate_logger = logging.getLogger('diy_crate_logger')
-crate_logger.setLevel(logging.DEBUG)
-
-l_handler = handlers.SysLogHandler(address='/dev/log')
-
-crate_logger.addHandler(l_handler)
-
-log_format = 'diycrate' + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'
-log_format = logging.Formatter(log_format)
-l_handler.setFormatter(log_format)
+crate_logger = logging.getLogger(__name__)
 
 trash_directory = os.path.expanduser('~/.local/share/Trash/files')
 
@@ -101,6 +92,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 folder = client.folder(folder_id=folder_id).get()
                 break
             except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
+                print(traceback.format_exc())
                 crate_logger.debug(traceback.format_exc())
                 if x >= num_retry - 1:
                     crate_logger.debug('Failed for the last time to get the folder: {}'.format(folder_id))
@@ -159,7 +151,15 @@ class EventHandler(pyinotify.ProcessEvent):
             folders_to_traverse = self.folders_to_traverse(event.path)
             crate_logger.debug(folders_to_traverse)
             client = Client(self.oauth)
-            box_folder = client.folder(folder_id='0').get()
+            failed = False
+            while not failed:
+                try:
+                    box_folder = client.folder(folder_id='0').get()
+                except Exception as e:
+                    print(traceback.format_exc())
+                    time.sleep(2)
+                else:
+                    failed = True
             cur_box_folder = box_folder
             # if we're modifying in root box dir, then we've already found the folder
             is_base = BOX_DIR in (event.path, event.path[:-1],)
@@ -196,7 +196,15 @@ class EventHandler(pyinotify.ProcessEvent):
             folders_to_traverse = self.folders_to_traverse(dest_event.path)
             crate_logger.debug(folders_to_traverse)
             client = Client(self.oauth)
-            box_folder = client.folder(folder_id='0').get()
+            failed = False
+            while not failed:
+                try:
+                    box_folder = client.folder(folder_id='0').get()
+                except Exception as e:
+                    print(traceback.format_exc())
+                    time.sleep(2)
+                else:
+                    failed = True
             cur_box_folder = box_folder
             # if we're modifying in root box dir, then we've already found the folder
             cur_box_folder = self.traverse_path(client, dest_event, cur_box_folder, folders_to_traverse)
@@ -285,7 +293,15 @@ class EventHandler(pyinotify.ProcessEvent):
             folders_to_traverse = self.folders_to_traverse(event.path)
             crate_logger.debug(folders_to_traverse)
             client = Client(self.oauth)
-            box_folder = client.folder(folder_id='0').get()
+            failed = False
+            while not failed:
+                try:
+                    box_folder = client.folder(folder_id='0').get()
+                except Exception as e:
+                    print(traceback.format_exc())
+                    time.sleep(2)
+                else:
+                    failed = True
             cur_box_folder = box_folder
             # if we're modifying in root box dir, then we've already found the folder
             is_base = BOX_DIR in (event.path, event.path[:-1],)

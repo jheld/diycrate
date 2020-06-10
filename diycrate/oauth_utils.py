@@ -1,5 +1,4 @@
 import time
-import uuid
 import webbrowser
 
 
@@ -10,20 +9,12 @@ from boxsdk.auth import RemoteOAuth2
 
 from diycrate.cache_utils import r_c
 
-
-
 import logging
-from logging import handlers
-crate_logger = logging.getLogger('diy_crate_logger')
-crate_logger.setLevel(logging.INFO)
 
-l_handler = handlers.SysLogHandler(address='/dev/log')
+from diycrate.log_utils import setup_logger
+setup_logger()
 
-crate_logger.addHandler(l_handler)
-
-log_format = 'diycrate' + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'
-log_format = logging.Formatter(log_format)
-l_handler.setFormatter(log_format)
+crate_logger = logging.getLogger(__name__)
 
 
 def setup_oauth(cache_client, conf_object, callback):
@@ -37,9 +28,9 @@ def setup_oauth(cache_client, conf_object, callback):
     access_token = cache_client.get('diy_crate.auth.access_token')
     refresh_token = cache_client.get('diy_crate.auth.refresh_token')
     if access_token:
-        access_token = access_token.decode(encoding='utf-8')
+        access_token = access_token.decode(encoding='utf-8') if isinstance(access_token, bytes) else access_token
     if refresh_token:
-        refresh_token = refresh_token.decode(encoding='utf-8')
+        refresh_token = refresh_token.decode(encoding='utf-8') if isinstance(refresh_token, bytes) else refresh_token
     oauth = OAuth2(
         client_id=conf_object['oauth2']['client_id'],
         client_secret=conf_object['oauth2']['client_secret'],
@@ -63,9 +54,9 @@ def get_access_token(access_token):
     access_token, refresh_token = requests.post(remote_url,
                                                 data={
                                                     'refresh_token': refresh_token.decode(
-                                                        'utf-8') if refresh_token else refresh_token,
+                                                        'utf-8') if refresh_token and isinstance(refresh_token, bytes) else refresh_token,
                                                     'access_token': access_token.decode(
-                                                        'utf-8') if access_token else access_token,
+                                                        'utf-8') if access_token and isinstance(access_token, bytes) else access_token,
                                                 },
                                                 verify=False).json()
     r_c.set('diy_crate.auth.access_token', access_token)
@@ -86,8 +77,8 @@ def setup_remote_oauth(cache_client, retrieve_access_token=get_access_token):
     oauth = RemoteOAuth2(
         client_id='',
         client_secret='',
-        access_token=access_token.decode('utf-8') if access_token else access_token,
-        refresh_token=refresh_token.decode('utf-8') if refresh_token else refresh_token,
+        access_token=access_token.decode('utf-8') if access_token and isinstance(access_token, bytes) else access_token,
+        refresh_token=refresh_token.decode('utf-8') if refresh_token and isinstance(refresh_token, bytes) else refresh_token,
         retrieve_access_token=retrieve_access_token
     )
     return oauth
@@ -124,13 +115,13 @@ def oauth_dance_retry(oauth_instance, cache_client, oauth_meta_info, conf_obj, b
                 temp_client.auth._access_token = cache_client.get('diy_crate.auth.access_token')
                 temp_client.auth._refresh_token = cache_client.get('diy_crate.auth.refresh_token')
                 if temp_client.auth._access_token:
-                    temp_client.auth._access_token = temp_client.auth._access_token.decode(encoding='utf-8')
+                    temp_client.auth._access_token = temp_client.auth._access_token.decode(encoding='utf-8') if isinstance(temp_client.auth._access_token, bytes) else temp_client.auth._access_token
                 if temp_client.auth._refresh_token:
-                    temp_client.auth._refresh_token = temp_client.auth._refresh_token.decode(encoding='utf-8')
+                    temp_client.auth._refresh_token = temp_client.auth._refresh_token.decode(encoding='utf-8') if isinstance(temp_client.auth._refresh_token, bytes) else temp_client.auth._refresh_token
                 temp_client.folder(folder_id='0').get()
                 break  # sweet, we should have valid oauth access, now
             except (exception.BoxAPIException, AttributeError) as e:
-                print(e)
+                print("dance api exc or attr error", e)
                 try:
                     oauth_meta_info['diy_crate.auth.oauth_dance_retry'] = True
                     try:
@@ -151,5 +142,6 @@ def oauth_dance_retry(oauth_instance, cache_client, oauth_meta_info, conf_obj, b
                 print(e)
                 time.sleep(5)
                 crate_logger.warning('had a connection error...sleeping for 5')
+                print("dance retry conn erro", e)
             except Exception as e:
-                print(e)
+                print("dance retry", e)

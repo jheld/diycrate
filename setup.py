@@ -17,21 +17,23 @@ def read(file_name):
     return open(os.path.join(os.path.dirname(__file__), file_name)).read()
 
 
-packages = ['bottle>=0.12.9,<0.13',
-            'boxsdk>=1.5.5,<2',
-            'decorator==4.0.9',
-            'ipython>=5',
-            'path.py==8.1.2',
-            'pexpect==4.0.1',
-            'ptyprocess==0.5.1',
-            'pyinotify==0.9.6',
-            'redis~=3.3.0',
-            'requests==2.20.0',
-            'requests-toolbelt>=0.6.0',
-            'simplegeneric==0.8.1',
-            'six>=1.10.0',
-            'pyopenssl>=16.0.0',
-            'cherrypy>=13.0.0']
+packages = [
+    "bottle>=0.12.9,<=0.13",
+    "boxsdk>=2.0,<3.0",
+    "decorator==4.0.9",
+    "path.py==8.1.2",
+    "pexpect==4.0.1",
+    "pickleshare==0.6",
+    "ptyprocess==0.5.1",
+    "pyinotify==0.9.6",
+    "redis~=3.3.0",
+    "requests==2.20.0",
+    "requests-toolbelt>=0.6.0",
+    "simplegeneric==0.8.1",
+    "pyopenssl>=16.0.0",
+    "cherrypy>=13.0.0",
+]
+
 
 setup(
     name="diycrate",
@@ -68,5 +70,7 @@ setup(
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
     ],
+    python_requires='>=3.5',
 )

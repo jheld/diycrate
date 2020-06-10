@@ -5,7 +5,6 @@ import queue
 import time
 import traceback
 import logging
-from logging import handlers
 from functools import partial
 
 from boxsdk import Client
@@ -17,17 +16,10 @@ from requests.packages.urllib3.exceptions import ProtocolError
 from diycrate.file_operations import wm, mask
 from diycrate.cache_utils import redis_key, redis_set, redis_get, r_c
 from diycrate.gui import notify_user_with_gui
+from diycrate.log_utils import setup_logger
+setup_logger()
 
-crate_logger = logging.getLogger('diy_crate_logger')
-crate_logger.setLevel(logging.DEBUG)
-
-l_handler = handlers.SysLogHandler(address='/dev/log')
-
-crate_logger.addHandler(l_handler)
-
-log_format = 'diycrate' + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'
-log_format = logging.Formatter(log_format)
-l_handler.setFormatter(log_format)
+crate_logger = logging.getLogger(__name__)
 
 
 def upload_queue_processor():
