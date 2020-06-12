@@ -14,16 +14,8 @@ from cheroot.ssl.builtin import BuiltinSSLAdapter
 from diycrate.cache_utils import r_c
 from diycrate.oauth_utils import setup_oauth, store_tokens_callback
 
-crate_logger = logging.getLogger('diy_crate_logger')
-crate_logger.setLevel(logging.DEBUG)
+crate_logger = logging.getLogger(__name__)
 
-l_handler = handlers.SysLogHandler(address='/dev/log')
-
-crate_logger.addHandler(l_handler)
-
-log_format = 'diycrate' + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'
-log_format = logging.Formatter(log_format)
-l_handler.setFormatter(log_format)
 
 cloud_provider_name = 'Box'
 

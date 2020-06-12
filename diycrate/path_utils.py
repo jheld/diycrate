@@ -2,7 +2,6 @@ import os
 import time
 import traceback
 import logging
-from logging import handlers
 from functools import partial
 
 
@@ -11,22 +10,14 @@ import requests
 from boxsdk.exception import BoxAPIException
 from boxsdk.client import Client
 
-from diycrate.oauth_utils import oauth_dance, oauth_dance_retry
+from diycrate.oauth_utils import oauth_dance_retry
 from diycrate.file_operations import wm, mask, BOX_DIR, conf_obj
 from diycrate.item_queue_io import download_queue, upload_queue
 from diycrate.cache_utils import redis_key, r_c, redis_set
+from diycrate.log_utils import setup_logger
+setup_logger()
 
-
-crate_logger = logging.getLogger('diy_crate_logger')
-crate_logger.setLevel(logging.DEBUG)
-
-l_handler = handlers.SysLogHandler(address='/dev/log')
-
-crate_logger.addHandler(l_handler)
-
-log_format = 'diycrate' + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'
-log_format = logging.Formatter(log_format)
-l_handler.setFormatter(log_format)
+crate_logger = logging.getLogger(__name__)
 
 
 def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_info, p_id=None, bottle_app=None, file_event_handler=None, oauth_lock_instance=None):
@@ -34,22 +25,26 @@ def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_in
     Walk the path recursively and add watcher and create the path.
     :param path:
     :param box_folder:
-    :param client:
     :param oauth_obj:
+    :param oauth_meta_info:
     :param p_id:
+    :param bottle_app:
+    :param file_event_handler:
+    :param oauth_lock_instance:
     :return:
     """
     if os.path.isdir(path):
         wm.add_watch(path, mask, rec=True, auto_add=True)
         local_files = os.listdir(path)
+        # crate_logger.info("walking path: {path}".format(path=path))
     oauth_dance_retry(oauth_obj, r_c, oauth_meta_info, conf_obj, bottle_app, file_event_handler=file_event_handler, oauth_lock_instance=oauth_lock_instance)
     client = Client(bottle_app.oauth)
     client.auth._access_token = r_c.get('diy_crate.auth.access_token')
     client.auth._refresh_token = r_c.get('diy_crate.auth.refresh_token')
     if client.auth._access_token:
-        client.auth._access_token = client.auth._access_token.decode(encoding='utf-8')
+        client.auth._access_token = client.auth._access_token.decode(encoding='utf-8') if isinstance(client.auth._access_token, bytes) else client.auth._access_token
     if client.auth._refresh_token:
-        client.auth._refresh_token = client.auth._refresh_token.decode(encoding='utf-8')
+        client.auth._refresh_token = client.auth._refresh_token.decode(encoding='utf-8') if isinstance(client.auth._refresh_token, bytes) else client.auth._refresh_token
     while True:
         try:
             b_folder = client.folder(folder_id=box_folder['id']).get()

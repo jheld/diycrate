@@ -1,0 +1,3 @@
+-r requirements.txt
+ipython>=5
+ipython-genutils==0.1.0
