@@ -92,8 +92,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 folder = client.folder(folder_id=folder_id).get()
                 break
             except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
-                print(traceback.format_exc())
-                crate_logger.debug(traceback.format_exc())
+                crate_logger.warning("Error getting box folder id: {}".format(folder_id), exc_info=True)
                 if x >= num_retry - 1:
                     crate_logger.debug('Failed for the last time to get the folder: {}'.format(folder_id))
         return folder
@@ -155,8 +154,8 @@ class EventHandler(pyinotify.ProcessEvent):
             while not failed:
                 try:
                     box_folder = client.folder(folder_id='0').get()
-                except Exception as e:
-                    print(traceback.format_exc())
+                except Exception:
+                    crate_logger.warning("Error getting box root folder.", exc_info=True)
                     time.sleep(2)
                 else:
                     failed = True
@@ -200,8 +199,8 @@ class EventHandler(pyinotify.ProcessEvent):
             while not failed:
                 try:
                     box_folder = client.folder(folder_id='0').get()
-                except Exception as e:
-                    print(traceback.format_exc())
+                except Exception:
+                    crate_logger.warning("Error getting root box folder.", exc_info=True)
                     time.sleep(2)
                 else:
                     failed = True
@@ -297,8 +296,8 @@ class EventHandler(pyinotify.ProcessEvent):
             while not failed:
                 try:
                     box_folder = client.folder(folder_id='0').get()
-                except Exception as e:
-                    print(traceback.format_exc())
+                except Exception:
+                    crate_logger.warning("Error getting box root folder.", exc_info=True)
                     time.sleep(2)
                 else:
                     failed = True

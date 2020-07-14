@@ -333,7 +333,7 @@ def oauth_handler():
     # access_token, refresh_token = bottle_app.oauth.authenticate(bottle.request.GET['code'])
     # bottle_app.oauth.authenticate(bottle.request.GET['code'])
     import requests
-    access_token, refresh_token = requests.post(conf_obj['box']['authenticate_url'], data={'code': bottle.request.GET['code'], }, verify=False).json()
+    access_token, refresh_token = requests.post(conf_obj['box']['authenticate_url'], data={'code': bottle.request.GET['code'], }, verify=True).json()
     store_tokens_callback(access_token, refresh_token)
     bottle_app.oauth._update_current_tokens(access_token, refresh_token)
     if not getattr(bottle_app, 'started_cloud_threads', False):
@@ -346,8 +346,8 @@ def box_oauth_watching():
     while True:
         try:
             oauth_dance_retry(oauth_instance=oauth, conf_obj=conf_obj, bottle_app=bottle_app, cache_client=r_c, file_event_handler=handler, oauth_lock_instance=oauth_lock, oauth_meta_info=oauth_meta)
-        except Exception as e:
-            print("watch error", e)
+        except Exception:
+            crate_logger.warning("watch error", exc_info=True)
         time.sleep(30)
 
 
@@ -375,8 +375,8 @@ def start_cloud_threads(client_oauth, oauth_lock_instance, bottle_thread=None):
     while not failed:
         try:
             box_folder = client.folder(folder_id='0').get()
-        except Exception as e:
-            print(traceback.format_exc())
+        except Exception:
+            crate_logger.warning("Encountered error getting root box folder", exc_info=True)
             time.sleep(2)
         else:
             failed = True
@@ -496,6 +496,7 @@ if __name__ == '__main__':
         os.mkdir(BOX_DIR)
     if not (r_c.exists('diy_crate.auth.access_token') and r_c.exists('diy_crate.auth.refresh_token')):
         oauth_dance(redis_client=r_c, conf=conf_obj, bottle_app=bottle_app, file_event_handler=handler)
+        oauth = bottle_app.oauth
     else:
         try:
             oauth = setup_remote_oauth(r_c)
