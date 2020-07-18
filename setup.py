@@ -20,16 +20,9 @@ def read(file_name):
 packages = [
     "bottle>=0.12.9,<=0.13",
     "boxsdk>=2.0,<3.0",
-    "decorator==4.0.9",
-    "path.py==8.1.2",
-    "pexpect==4.0.1",
-    "pickleshare==0.6",
-    "ptyprocess==0.5.1",
     "pyinotify==0.9.6",
     "redis~=3.3.0",
-    "requests==2.20.0",
-    "requests-toolbelt>=0.6.0",
-    "simplegeneric==0.8.1",
+    "requests>=2.20.0,<3.0",
     "pyopenssl>=16.0.0",
     "cherrypy>=13.0.0",
 ]
