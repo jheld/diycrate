@@ -1,0 +1,2 @@
+include diycrate_app server_app __init__ tox LICENSE requirements* README
+recursive-include diycrate *

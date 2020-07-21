@@ -1,4 +1,6 @@
 import os
+from itertools import chain
+
 from setuptools import setup
 
 
@@ -17,20 +19,20 @@ def read(file_name):
     return open(os.path.join(os.path.dirname(__file__), file_name)).read()
 
 
-packages = [
-    "bottle>=0.12.9,<=0.13",
-    "boxsdk>=2.0,<3.0",
-    "pyinotify==0.9.6",
-    "redis~=3.3.0",
-    "requests>=2.20.0,<3.0",
-    "pyopenssl>=16.0.0",
-    "cherrypy>=13.0.0",
-]
+def get_packages_from_file_name(pkg_file_name):
+    with open(pkg_file_name) as f:
+        packages_in_file = [item.strip() for item in f if item and item.strip()]
+    return packages_in_file
+
+
+package_file_names = ["./requirements.txt"]
+
+packages = list(chain.from_iterable((get_packages_from_file_name(pkg_f_name) for pkg_f_name in package_file_names)))
 
 
 setup(
     name="diycrate",
-    version="0.2.11.0rc3",
+    version="0.2.11.0rc5",
     author="Jason Held",
     author_email="jasonsheld@gmail.com",
     description="box.com for linux -- unofficial, based on python SDK",
