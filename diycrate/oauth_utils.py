@@ -104,45 +104,7 @@ def store_tokens_callback(access_token, refresh_token):
 def oauth_dance(redis_client, conf, bottle_app, file_event_handler, bottle_thread=None):
     bottle_app.oauth = file_event_handler.oauth = setup_remote_oauth(redis_client)
     import requests
-    auth_url, bottle_app.csrf_token = requests.get(conf['box']['authorization_url'], data={'redirect_url': 'https://localhost:8080/', }, verify=True).json()
+    auth_url, bottle_app.csrf_token = requests.get(conf['box']['authorization_url'], data={'redirect_url': 'https://localhost:{port}/'.format(port=conf["box"]["web_server_port"]), }, verify=True).json()
     if bottle_thread and not bottle_thread.is_alive():
         bottle_thread.start()
     webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
-
-
-def oauth_dance_retry(oauth_instance, cache_client, oauth_meta_info, conf_obj, bottle_app, file_event_handler, oauth_lock_instance, bottle_thread=None):
-    with oauth_lock_instance:
-        temp_client = Client(oauth_instance)
-        while True:
-            try:
-                temp_client.auth._access_token = cache_client.get('diy_crate.auth.access_token')
-                temp_client.auth._refresh_token = cache_client.get('diy_crate.auth.refresh_token')
-                if temp_client.auth._access_token:
-                    temp_client.auth._access_token = temp_client.auth._access_token.decode(encoding='utf-8') if isinstance(temp_client.auth._access_token, bytes) else temp_client.auth._access_token
-                if temp_client.auth._refresh_token:
-                    temp_client.auth._refresh_token = temp_client.auth._refresh_token.decode(encoding='utf-8') if isinstance(temp_client.auth._refresh_token, bytes) else temp_client.auth._refresh_token
-                temp_client.folder(folder_id='0').get()
-                break  # sweet, we should have valid oauth access, now
-            except (exception.BoxAPIException, AttributeError):
-                crate_logger.warning("dance api exc or attr error", exc_info=True)
-                try:
-                    oauth_meta_info['diy_crate.auth.oauth_dance_retry'] = True
-                    try:
-                        get_access_token(cache_client.get(u'diy_crate.auth.access_token'))
-                        crate_logger.info(u'got new access and refresh tokens')
-                    # might as well get a new set of tokens
-                    except Exception:
-                        cache_client.delete('diy_crate.auth.access_token', 'diy_crate.auth.refresh_token',)
-                        oauth_dance(cache_client, conf_obj, bottle_app, file_event_handler, bottle_thread=bottle_thread)
-                        # wait until the oauth dance has completed
-                        while not (cache_client.get('diy_crate.auth.access_token') and cache_client.get('diy_crate.auth.refresh_token')):
-                            time.sleep(15)
-                            crate_logger.info('Just slept, waiting on the oauth dance')
-
-                finally:
-                    oauth_meta_info.pop('diy_crate.auth.oauth_dance_retry')
-            except requests.exceptions.ConnectionError:
-                time.sleep(5)
-                crate_logger.warning('dancy retry had a connection error...sleeping for 5', exc_info=True)
-            except Exception:
-                crate_logger.warning("dance retry, error", exc_info=True)

@@ -3,7 +3,6 @@ import os
 import threading
 import logging
 import time
-import traceback
 from functools import partial
 
 import pyinotify
@@ -14,7 +13,6 @@ from boxsdk.object.folder import Folder
 from requests import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
-from diycrate.oauth_utils import oauth_dance_retry
 from diycrate.cache_utils import redis_key, redis_get, r_c
 from diycrate.log_utils import setup_logger
 setup_logger()
@@ -68,7 +66,6 @@ class EventHandler(pyinotify.ProcessEvent):
             time.sleep(self.wait_time)
             cur_num_operations = len(self.operations)
             if cur_num_operations:
-                oauth_dance_retry(bottle_app=self.bottle_app, oauth_instance=self.oauth, oauth_meta_info=self.oauth_meta_info, conf_obj=conf_obj, cache_client=r_c, file_event_handler=self, oauth_lock_instance=self.oauth_lock_instance)
                 operations_to_perform = self.operations[:cur_num_operations]  # keep a local copy for this loop-run
                 # operations list could have changed since the previous two instructions
                 # pycharm complained that I was re-assigning the instance variable outside of the __init__.
@@ -293,6 +290,7 @@ class EventHandler(pyinotify.ProcessEvent):
             crate_logger.debug(folders_to_traverse)
             client = Client(self.oauth)
             failed = False
+            box_folder = None
             while not failed:
                 try:
                     box_folder = client.folder(folder_id='0').get()
@@ -319,6 +317,11 @@ class EventHandler(pyinotify.ProcessEvent):
                     did_find_the_file = is_file and entry['type'] == 'file' and entry['name'] == event.name
                     did_find_the_folder = is_dir and entry['type'] == 'folder' and entry['name'] == event.name
                     if did_find_the_file:
+                        dwld_key = "diy_crate.breadcrumb.create_from_box.{path}".format(path=event.pathname)
+                        file_created_from_download = r_c.exists(dwld_key)
+                        if file_created_from_download:
+                            self.files_from_box.append(entry['id'])
+                            r_c.delete(dwld_key)
                         if entry['id'] not in self.files_from_box:
                             # more accurately, was this created offline?
                             AssertionError(False,
@@ -330,6 +333,7 @@ class EventHandler(pyinotify.ProcessEvent):
                             self.upload_queue.put(partial(a_file.update_contents, event.pathname))
                             # cur_box_folder.upload(event.pathname, event.name)
                         else:
+                            crate_logger.debug("Created from box: {fpath}, but create flag ran on our fs too, so we are skipping the logic to upload.".format(fpath=event.pathname))
                             self.files_from_box.remove(entry['id'])  # just downloaded it
                         break
                     elif did_find_the_folder:
@@ -408,9 +412,9 @@ class EventHandler(pyinotify.ProcessEvent):
                                                                                       path_name=event.pathname,
                                                                                       obj_id=cur_file['id']))
                             except TypeError:
-                                crate_logger.debug(traceback.format_exc())
+                                crate_logger.debug("Error occurred", exc_info=True)
                             except Exception:
-                                crate_logger.debug(traceback.format_exc())
+                                crate_logger.debug("Error occurred", exc_info=True)
 
                         else:
                             self.files_from_box.remove(entry['id'])  # just wrote if, assuming create event didn't run
@@ -559,19 +563,16 @@ def get_box_folder(client, cur_box_folder, folder_id, retry_limit):
         except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError, BoxAPIException):
             if i + 1 >= retry_limit:
                 crate_logger.warn('Attempt ({retry_count}) out of ({max_count}); Going to give '
-                                  'up on the write event because: {trace}'.format(retry_count=i,
-                                                                                  max_count=retry_limit,
-                                                                                  trace=traceback.format_exc()))
+                                  'up on the write event'.format(retry_count=i, max_count=retry_limit), exc_info=True)
             else:
                 crate_logger.warn('Attempt ({retry_count}) '
-                                  'out of ({max_count}): {trace}'.format(retry_count=i,
-                                                                         max_count=retry_limit,
-                                                                         trace=traceback.format_exc()))
+                                  'out of ({max_count})'.format(retry_count=i, max_count=retry_limit), exc_info=True)
     return cur_box_folder
 
 
 wm = pyinotify.WatchManager()
 in_delete = getattr(pyinotify, 'IN_DELETE')
+in_create = getattr(pyinotify, 'IN_CREATE')
 in_modify = getattr(pyinotify, 'IN_MODIFY')
 in_close_write = getattr(pyinotify, 'IN_CLOSE_WRITE')
 in_moved_to = getattr(pyinotify, 'IN_MOVED_TO')

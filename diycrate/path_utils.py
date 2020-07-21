@@ -1,6 +1,5 @@
 import os
 import time
-import traceback
 import logging
 from functools import partial
 
@@ -10,8 +9,7 @@ import requests
 from boxsdk.exception import BoxAPIException
 from boxsdk.client import Client
 
-from diycrate.oauth_utils import oauth_dance_retry
-from diycrate.file_operations import wm, mask, BOX_DIR, conf_obj
+from diycrate.file_operations import wm, mask, BOX_DIR
 from diycrate.item_queue_io import download_queue, upload_queue
 from diycrate.cache_utils import redis_key, r_c, redis_set
 from diycrate.log_utils import setup_logger
@@ -36,8 +34,6 @@ def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_in
     if os.path.isdir(path):
         wm.add_watch(path, mask, rec=True, auto_add=True)
         local_files = os.listdir(path)
-        # crate_logger.info("walking path: {path}".format(path=path))
-    oauth_dance_retry(oauth_obj, r_c, oauth_meta_info, conf_obj, bottle_app, file_event_handler=file_event_handler, oauth_lock_instance=oauth_lock_instance)
     client = Client(bottle_app.oauth)
     client.auth._access_token = r_c.get('diy_crate.auth.access_token')
     client.auth._refresh_token = r_c.get('diy_crate.auth.refresh_token')
@@ -50,7 +46,7 @@ def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_in
             b_folder = client.folder(folder_id=box_folder['id']).get()
             break
         except requests.exceptions.ConnectionError:
-            crate_logger.warning('Moving on with sleep, but: {}'.format(traceback.format_exc()))
+            crate_logger.warning('Moving on with sleep', exc_info=True)
             time.sleep(5)
 
     num_entries_in_folder = b_folder['item_collection']['total_count']
@@ -90,13 +86,13 @@ def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_in
                                   last_modified_time=os.path.getmtime(local_path),
                                   box_dir_path=BOX_DIR, fresh_download=fresh_download,
                                   folder=os.path.dirname(local_path))
+                        box_folder_obj = client.folder(folder_id=box_item['id']).get()
                         walk_and_notify_and_download_tree(local_path,
-                                                          client.folder(folder_id=box_item['id']).get(),
+                                                          box_folder_obj,
                                                           oauth_obj, oauth_meta_info,
                                                           p_id=box_folder['id'], bottle_app=bottle_app, file_event_handler=file_event_handler, oauth_lock_instance=oauth_lock_instance)
-                        break
                     except BoxAPIException as e:
-                        crate_logger.debug(traceback.format_exc())
+                        crate_logger.debug("Box error occurred.")
                         if e.status == 404:
                             crate_logger.debug('Box says: {obj_id}, '
                                                '{obj_name}, is a 404 status.'.format(obj_id=box_item['id'],
@@ -106,14 +102,17 @@ def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_in
                                 'But, this is a folder, we do not handle recursive folder deletes correctly yet.')
                             break
                     except (ConnectionError, ConnectionResetError, BrokenPipeError):
-                        crate_logger.debug('Attempt {idx}/{limit}; {the_trace}'.format(the_trace=traceback.format_exc(),
-                                                                                       idx=i+1, limit=retry_limit))
+                        crate_logger.debug('Attempt {idx}/{limit}'.format(idx=i+1, limit=retry_limit), exc_info=True)
+                    else:
+                        if i:
+                            crate_logger.debug("Succeeded on retry.")
+                        break
             else:
                 try:
                     file_obj = box_item
                     download_queue.put((file_obj, os.path.join(path, box_item['name']), oauth_obj))
                 except BoxAPIException as e:
-                    crate_logger.debug(traceback.format_exc())
+                    crate_logger.debug("Error occurred", exc_info=True)
                     if e.status == 404:
                         crate_logger.debug('Box says: {obj_id}, {obj_name}, '
                                            'is a 404 status.'.format(obj_id=box_item['id'], obj_name=box_item['name']))
