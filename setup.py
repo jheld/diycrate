@@ -30,7 +30,7 @@ packages = [
 
 setup(
     name="diycrate",
-    version="0.2.11.0rc3",
+    version="0.2.11.0rc4",
     author="Jason Held",
     author_email="jasonsheld@gmail.com",
     description="box.com for linux -- unofficial, based on python SDK",
