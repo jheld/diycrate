@@ -313,6 +313,10 @@ walk_thread.daemon = True
 #     r_c.delete('diy_crate.auth.refresh_token', 'diy_crate.auth.access_token')
 #     return 'OK'
 
+oauth = None
+conf_obj = configparser.ConfigParser()
+
+
 @bottle_app.route('index')
 def index():
     """
@@ -410,8 +414,9 @@ class SSLCherryPyServer(ServerAdapter):
             server.stop()
 
 
-if __name__ == '__main__':
-    conf_obj = configparser.ConfigParser()
+def main():
+    global oauth
+
     conf_dir = os.path.abspath(os.path.expanduser('~/.config/diycrate'))
     if not os.path.isdir(conf_dir):
         os.mkdir(conf_dir)
@@ -492,3 +497,7 @@ if __name__ == '__main__':
     # notifier_thread.start()
     if bottle_thread and not bottle_thread.is_alive():
         bottle_thread.start()
+
+
+if __name__ == '__main__':
+    main()

@@ -12,10 +12,10 @@ from boxsdk.object.file import File
 from requests import ConnectionError
 from requests.packages.urllib3.exceptions import ProtocolError
 
-from diycrate.file_operations import wm, mask, in_create
-from diycrate.cache_utils import redis_key, redis_set, redis_get, r_c
-from diycrate.gui import notify_user_with_gui
-from diycrate.log_utils import setup_logger
+from .file_operations import wm, mask
+from .cache_utils import redis_key, redis_set, redis_get, r_c
+from .gui import notify_user_with_gui
+from .log_utils import setup_logger
 setup_logger()
 
 crate_logger = logging.getLogger(__name__)

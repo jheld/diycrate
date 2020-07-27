@@ -1,17 +1,16 @@
-import time
 import webbrowser
 
 
 import requests
 
-from boxsdk import OAuth2, Client, exception
+from boxsdk import OAuth2
 from boxsdk.auth import RemoteOAuth2
 
-from diycrate.cache_utils import r_c
+from .cache_utils import r_c
 
 import logging
 
-from diycrate.log_utils import setup_logger
+from .log_utils import setup_logger
 setup_logger()
 
 crate_logger = logging.getLogger(__name__)
@@ -47,7 +46,7 @@ def get_access_token(access_token):
     :param access_token: token we will try to refresh/get anew
     :return:
     """
-    from diycrate.file_operations import conf_obj
+    from .file_operations import conf_obj
     conf_object = conf_obj
     remote_url = conf_object['box']['token_url']
     refresh_token = r_c.get('diy_crate.auth.refresh_token')

@@ -9,10 +9,11 @@ import requests
 from boxsdk.exception import BoxAPIException
 from boxsdk.client import Client
 
-from diycrate.file_operations import wm, mask, BOX_DIR
-from diycrate.item_queue_io import download_queue, upload_queue
-from diycrate.cache_utils import redis_key, r_c, redis_set
-from diycrate.log_utils import setup_logger
+from .file_operations import wm, mask, BOX_DIR
+from .item_queue_io import download_queue, upload_queue
+from .cache_utils import redis_key, r_c, redis_set
+from .log_utils import setup_logger
+
 setup_logger()
 
 crate_logger = logging.getLogger(__name__)

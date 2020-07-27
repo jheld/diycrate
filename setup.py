@@ -1,34 +1,33 @@
-import os
-from itertools import chain
+"""A setuptools based setup module.
+See:
+https://packaging.python.org/guides/distributing-packages-using-setuptools/
+https://github.com/pypa/sampleproject
+"""
 
-from setuptools import setup
+# Always prefer setuptools over distutils
+from setuptools import setup, find_packages, find_namespace_packages
+import pathlib
 
+here = pathlib.Path(__file__).parent.resolve()
 
-# Utility function to read the README file.
-# Used for the long_description.  It's nice, because now 1) we have a top level
-# README file and 2) it's easier to type in the README file than to put a raw
-# string in below ...
-
-
-def read(file_name):
-    """
-    Return the contents of the file at the file_name
-    :param file_name:
-    :return:
-    """
-    return open(os.path.join(os.path.dirname(__file__), file_name)).read()
+# Get the long description from the README file
+long_description = (here / 'README.md').read_text(encoding='utf-8')
 
 
-def get_packages_from_file_name(pkg_file_name):
-    with open(pkg_file_name) as f:
-        packages_in_file = [item.strip() for item in f if item and item.strip()]
-    return packages_in_file
+install_requires = [
+    "bottle>=0.12.8,<=0.13",
+    "boxsdk>=2.0,<3.0",
+    "pyinotify==0.9.6",
+    "redis~=3.3.0",
+    "requests>=2.20.0,<3.0",
+    "pyopenssl>=16.0.0",
+    "cherrypy>=13.0.0",
+]
 
-
-package_file_names = ["./requirements.txt"]
-
-packages = list(chain.from_iterable((get_packages_from_file_name(pkg_f_name) for pkg_f_name in package_file_names)))
-
+extras_require = {
+    "dev": ["ipython>=7.0", "check-manifest", ],
+    "test": ["tox", ],
+}
 
 setup(
     name="diycrate",
@@ -36,23 +35,20 @@ setup(
     author="Jason Held",
     author_email="jasonsheld@gmail.com",
     description="box.com for linux -- unofficial, based on python SDK",
-    license="MIT",
     keywords="cloud storage box.com sdk linux box",
     url="https://github.com/jheld/diycrate",
-    install_requires=packages,
-    scripts=['diycrate_app', ],
-    packages=['diycrate', ],
-    long_description='box.com for linux\n'
-                     'We now support SSL (self signed cert\'s yo)!'
-                     'Unfortunately, this means getting openssl, ffi,'
-                     'and python dev libraries installed, beforehand.'
-                     'Also, you will need redis, but I do supply that '
-                     'inside the source code, so all you have to do is '
-                     'run "make" and "sudo make install" on the [untar\'d] redis directory.'
-                     'I have not documented explicitly how to get this thing running, yet, '
-                     'so please give me time, or make an Issue on this project '
-                     'to let me know someone is actually trying to use it. '
-                     'If we want, I can even try packaging this up as deb and rpm to make the setup easier.',
+    install_requires=install_requires,
+    test_suite="tests",
+    extras_require=extras_require,
+    packages=find_packages(exclude=['tests', 'tests.*']),
+    entry_points={
+      'console_scripts': [
+        'diycrate_app=diycrate.diycrate_app:main',
+        'diycrate_server=diycrate.server_app:main',
+      ],
+    },
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Topic :: Utilities",
@@ -62,10 +58,16 @@ setup(
         'Environment :: Console',
         'Environment :: Web Environment',
         'Intended Audience :: End Users/Desktop',
+        'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3 :: Only',
     ],
-    python_requires='>=3.5',
+    python_requires='>=3.5,<4',
+    project_urls={
+        'Source': 'https://github.com/jheld/diycrate/',
+        'Issues': 'https://github.com/jheld/diycrate/issues',
+    },
 )
