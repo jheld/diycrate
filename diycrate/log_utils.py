@@ -1,6 +1,6 @@
 from logging.config import dictConfig
 
-from diycrate.logging_config import LOGGING
+from .logging_config import LOGGING
 
 
 def setup_logger(config=None):

@@ -4,7 +4,6 @@ import configparser
 import json
 import logging
 import os
-from logging import handlers
 
 import bottle
 from bottle import ServerAdapter
@@ -13,6 +12,10 @@ from cheroot.ssl.builtin import BuiltinSSLAdapter
 
 from diycrate.cache_utils import r_c
 from diycrate.oauth_utils import setup_oauth, store_tokens_callback
+from diycrate.log_utils import setup_logger
+
+
+setup_logger()
 
 crate_logger = logging.getLogger(__name__)
 
@@ -93,8 +96,12 @@ class SSLCherryPyServer(ServerAdapter):
             server.stop()
 
 
-if __name__ == '__main__':
-    conf_obj = configparser.ConfigParser()
+conf_obj = configparser.ConfigParser()
+
+
+def main():
+    global conf_obj
+
     conf_dir = os.path.abspath(os.path.expanduser('~/.config/diycrate_server'))
     if not os.path.isdir(conf_dir):
         os.mkdir(conf_dir)
@@ -148,3 +155,7 @@ if __name__ == '__main__':
 
     conf_obj.write(open(cloud_credentials_file_path, 'w'))
     bottle_app.run(server=SSLCherryPyServer, port=8081, host='0.0.0.0')
+
+
+if __name__ == '__main__':
+    main()

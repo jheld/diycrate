@@ -11,10 +11,10 @@ from boxsdk.exception import BoxAPIException
 from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
 from requests import ConnectionError
-from requests.packages.urllib3.exceptions import ProtocolError
+from urllib3.exceptions import ProtocolError
 
-from diycrate.cache_utils import redis_key, redis_get, r_c
-from diycrate.log_utils import setup_logger
+from .cache_utils import redis_key, redis_get, r_c
+from .log_utils import setup_logger
 setup_logger()
 
 crate_logger = logging.getLogger(__name__)
@@ -42,7 +42,12 @@ class EventHandler(pyinotify.ProcessEvent):
         Extends the super to add cloud storage state.
         :return:
         """
-        super(EventHandler, self).my_init()
+        our_keys = ["oauth", "upload_queue", "bottle_app", "oauth_meta_info", "oauth_lock_instance"]
+        our_kargs = {k: kargs.get(k) for k in our_keys}
+        for key in our_keys:
+            kargs.pop(key, None)
+        super().my_init(**kargs)
+        kargs = our_kargs
         self.move_events = []
         self.files_from_box = []
         self.folders_from_box = []
