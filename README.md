@@ -1,6 +1,8 @@
 # diycrate
 box.com for linux
 
+[![Build](https://github.com/jheld/diycrate/workflows/Build/badge.svg)](https://github.com/jheld/diycrate/actions?query=workflow%3ABuild+branch%3Amaster) 
+
 ## Installation on Ubuntu
 ```bash
 sudo apt install libffi-dev libssl-dev python3-pip
