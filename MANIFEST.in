@@ -8,6 +8,7 @@ include LICENSE
 
 include *.py
 
+exclude Makefile
 
 # Include the project's internal logic
 recursive-include diycrate *
