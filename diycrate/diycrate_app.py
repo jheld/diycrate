@@ -23,8 +23,6 @@ from diycrate.gui import notify_user_with_gui
 from diycrate.item_queue_io import (
     upload_queue_processor,
     download_queue_processor,
-    download_queue_monitor,
-    upload_queue_monitor,
     download_queue,
     upload_queue,
 )
@@ -55,24 +53,15 @@ trash_directory = os.path.expanduser("~/.local/share/Trash/files")
 
 oauth_meta = {}
 
-oauth_lock = threading.Lock()
-
-upload_mon_thread = threading.Thread(target=upload_queue_monitor)
-
-download_mon_thread = threading.Thread(target=download_queue_monitor)
-
 handler = EventHandler(
-    upload_queue=upload_queue,
-    bottle_app=bottle_app,
-    oauth_meta_info=oauth_meta,
-    oauth_lock_instance=oauth_lock,
+    upload_queue=upload_queue, bottle_app=bottle_app, oauth_meta_info=oauth_meta
 )
 
 notifier = pyinotify.ThreadedNotifier(wm, handler, read_freq=10)
 notifier.coalesce_events()
 
 
-def long_poll_event_listener(oauth_meta_info, oauth_lock_instance):
+def long_poll_event_listener():
     """
     Receive and process remote cloud item events in real-time
     :return:
@@ -185,7 +174,9 @@ def process_item_trash_file(event, obj_id):
     if r_c.exists(redis_key(obj_id)):
         r_c.delete(redis_key(obj_id))
         r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-    notify_user_with_gui("Box message: Deleted {}".format(file_path), crate_logger)
+    notify_user_with_gui(
+        "Box message: Deleted {}".format(file_path), crate_logger, expire_time=10000
+    )
 
 
 def process_item_trash_folder(event, obj_id):
@@ -410,9 +401,7 @@ def get_sub_ids(box_id):
     return ids
 
 
-long_poll_thread = threading.Thread(
-    target=long_poll_event_listener, args=(oauth_meta, oauth_lock)
-)
+long_poll_thread = threading.Thread(target=long_poll_event_listener)
 long_poll_thread.daemon = True
 
 walk_thread = threading.Thread(target=re_walk)
@@ -455,16 +444,15 @@ def oauth_handler():
     store_tokens_callback(access_token, refresh_token)
     bottle_app.oauth._update_current_tokens(access_token, refresh_token)
     if not getattr(bottle_app, "started_cloud_threads", False):
-        start_cloud_threads(bottle_app.oauth, oauth_lock)
+        start_cloud_threads(bottle_app.oauth)
         bottle_app.started_cloud_threads = True
     return "OK"
 
 
-def start_cloud_threads(client_oauth, oauth_lock_instance):
+def start_cloud_threads(client_oauth):
     """
 
     :param client_oauth:
-    :param oauth_lock_instance:
     :return:
     """
     client = Client(client_oauth)
@@ -500,7 +488,7 @@ def start_cloud_threads(client_oauth, oauth_lock_instance):
     if not download_thread.is_alive():
         download_thread.daemon = True
         download_thread.start()
-    if not upload_mon_thread.is_alive():
+    if not upload_thread.is_alive():
         upload_thread.daemon = True
         upload_thread.start()
     # local trash can
@@ -511,12 +499,10 @@ def start_cloud_threads(client_oauth, oauth_lock_instance):
         walk_thread._args = (
             BOX_DIR,
             box_folder,
-            client,
             client_oauth,
             oauth_meta,
             bottle_app,
             handler,
-            oauth_lock_instance,
         )
         walk_thread.start()
 
@@ -664,7 +650,7 @@ def main():
     else:
         try:
             oauth = setup_remote_oauth(r_c)
-            start_cloud_threads(oauth, oauth_lock)
+            start_cloud_threads(oauth)
             bottle_app.started_cloud_threads = True
         except exception.BoxOAuthException:
             r_c.delete("diy_crate.auth.access_token", "diy_crate.auth.refresh_token")

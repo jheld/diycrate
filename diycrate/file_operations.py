@@ -43,13 +43,7 @@ class EventHandler(pyinotify.ProcessEvent):
         Extends the super to add cloud storage state.
         :return:
         """
-        our_keys = [
-            "oauth",
-            "upload_queue",
-            "bottle_app",
-            "oauth_meta_info",
-            "oauth_lock_instance",
-        ]
+        our_keys = ["oauth", "upload_queue", "bottle_app", "oauth_meta_info"]
         our_kargs = {k: kargs.get(k) for k in our_keys}
         for key in our_keys:
             kargs.pop(key, None)
@@ -65,7 +59,6 @@ class EventHandler(pyinotify.ProcessEvent):
         self.operations_thread = threading.Thread(target=self.operation_coalesce)
         self.bottle_app = kargs.get("bottle_app")
         self.oauth_meta_info = kargs.get("oauth_meta_info")
-        self.oauth_lock_instance = kargs.get("oauth_lock_instance")
         self.operations_thread.daemon = True
         self.operations_thread.start()
 
@@ -176,17 +169,24 @@ class EventHandler(pyinotify.ProcessEvent):
         :param operation:
         :return:
         """
-        if operation == "delete":
-            self.process_delete_event(event)
-        elif operation == "move":
-            self.process_move_event(event)
-
-        elif operation == "create":
-            self.process_create_event(event)
-        elif operation == "modify":
-            self.process_modify_event(event, operation)
-        elif operation == "real_close":
-            self.process_real_close_event(event)
+        try:
+            if operation == "delete":
+                self.process_delete_event(event)
+            elif operation == "move":
+                self.process_move_event(event)
+            elif operation == "create":
+                self.process_create_event(event)
+            elif operation == "modify":
+                self.process_modify_event(event, operation)
+            elif operation == "real_close":
+                self.process_real_close_event(event)
+        except Exception:
+            crate_logger.warning(
+                "Operation: {operation} on event: {event} encountered an error.".format(
+                    operation=operation, event=event
+                ),
+                exc_info=True,
+            )
 
     def process_real_close_event(self, event):
         crate_logger.debug("Real  close...: {}".format(event.pathname))

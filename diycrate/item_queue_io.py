@@ -180,32 +180,6 @@ def perform_download(item, path, retry_limit=15):
         break
 
 
-def download_queue_monitor():
-    """
-
-    :return:
-    """
-    while True:
-        time.sleep(10)
-        if download_queue.not_empty:
-            crate_logger.debug("Download queue size: {}".format(download_queue.qsize()))
-        else:
-            crate_logger.debug("Download queue is empty.")
-
-
-def upload_queue_monitor():
-    """
-
-    :return:
-    """
-    while True:
-        time.sleep(10)
-        if upload_queue.not_empty:
-            crate_logger.debug("Upload queue size: {}".format(upload_queue.qsize()))
-        else:
-            crate_logger.debug("Upload queue is empty.")
-
-
 download_queue = queue.Queue()
 upload_queue = queue.Queue()
 uploads_given_up_on = []
