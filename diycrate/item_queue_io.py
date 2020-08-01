@@ -120,8 +120,8 @@ def download_queue_processor():
                 download_queue.task_done()
 
 
-def perform_download(item, path):
-    for i in range(15):
+def perform_download(item, path, retry_limit=15):
+    for i in range(retry_limit):
         if os.path.basename(path).startswith(".~lock"):  # avoid downloading lock files
             break
         try:
