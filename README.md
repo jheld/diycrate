@@ -1,7 +1,7 @@
 # diycrate
 box.com for linux
 
-[![Build](https://github.com/jheld/diycrate/workflows/Build/badge.svg)](https://github.com/jheld/diycrate/actions?query=workflow%3ABuild+branch%3Amaster) 
+[![Build](https://github.com/jheld/diycrate/workflows/Build/badge.svg)](https://github.com/jheld/diycrate/actions?query=workflow%3ABuild+branch%3Amaster)
 
 ## Installation on Ubuntu
 ```bash
@@ -16,10 +16,10 @@ This file will be overwritten and will contain run time specific information!
 
 ## Self-signed Certificate
 
-Currently, in order for your machine to operate as a listener/hook against the oauth2 process with Box, you will 
+Currently, in order for your machine to operate as a listener/hook against the oauth2 process with Box, you will
 have to run a webserver -- which we provide for you in this application, to handle all of that, automatically.
 
-However, in order for your browser (and your sanity), you will want to create a certificate. When running on your 
+However, in order for your browser (and your sanity), you will want to create a certificate. When running on your
 local  machine/localhost, you will need to create a self-signed certificate.
 
 Let's Encrypt has a nice write-up on how to do that: https://letsencrypt.org/docs/certificates-for-localhost/#making-and-trusting-your-own-certificates
@@ -39,7 +39,7 @@ sudo apt install redis-server
 Currently there is no default out-of-the-box working configuration file. This is partly due to currently (should the user not setup their own) using `diycrate.xyz` (I host it) for a part of the oauth2 dance. It isn't "hard" to setup your own, nor is it hard to use the "always running, you can plug into" mine, but it's not exactly documented.
 
 ```bash
-diycrate_app --cacert_pem_path /path/to/cert.pem --privkey_pem_path /path/to/privkey.pem 
+diycrate_app --cacert_pem_path /path/to/cert.pem --privkey_pem_path /path/to/privkey.pem
 ```
 
 Run `diycrate_app --help` for more CLI information

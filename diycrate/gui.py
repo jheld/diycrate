@@ -8,7 +8,11 @@ def notify_user_with_gui(message, crate_logger=None):
     :param crate_logger:
     :return:
     """
-    proc = subprocess.Popen(['notify-send', message])
+    proc = subprocess.Popen(["notify-send", message])
     if proc.returncode:
         if crate_logger:
-            crate_logger.debug('Tried sending a message to user, return code: {}'.format(proc.returncode))
+            crate_logger.debug(
+                "Tried sending a message to user, return code: {}".format(
+                    proc.returncode
+                )
+            )

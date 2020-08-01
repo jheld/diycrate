@@ -19,7 +19,16 @@ setup_logger()
 crate_logger = logging.getLogger(__name__)
 
 
-def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_info, p_id=None, bottle_app=None, file_event_handler=None, oauth_lock_instance=None):
+def walk_and_notify_and_download_tree(
+    path,
+    box_folder,
+    oauth_obj,
+    oauth_meta_info,
+    p_id=None,
+    bottle_app=None,
+    file_event_handler=None,
+    oauth_lock_instance=None,
+):
     """
     Walk the path recursively and add watcher and create the path.
     :param path:
@@ -35,99 +44,210 @@ def walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_in
     if os.path.isdir(path):
         wm.add_watch(path, mask, rec=True, auto_add=True)
         local_files = os.listdir(path)
-    client = Client(bottle_app.oauth)
-    client.auth._access_token = r_c.get('diy_crate.auth.access_token')
-    client.auth._refresh_token = r_c.get('diy_crate.auth.refresh_token')
-    if client.auth._access_token:
-        client.auth._access_token = client.auth._access_token.decode(encoding='utf-8') if isinstance(client.auth._access_token, bytes) else client.auth._access_token
-    if client.auth._refresh_token:
-        client.auth._refresh_token = client.auth._refresh_token.decode(encoding='utf-8') if isinstance(client.auth._refresh_token, bytes) else client.auth._refresh_token
+    else:
+        raise ValueError(
+            "path: {path} is not a path; " "cannot walk it.".format(path=path)
+        )
+    client = oauth_setup_within_directory_walk(bottle_app)
     while True:
         try:
-            b_folder = client.folder(folder_id=box_folder['id']).get()
+            b_folder = client.folder(folder_id=box_folder["id"]).get()
             break
         except requests.exceptions.ConnectionError:
-            crate_logger.warning('Moving on with sleep', exc_info=True)
+            crate_logger.warning("Moving on with sleep", exc_info=True)
             time.sleep(5)
 
-    num_entries_in_folder = b_folder['item_collection']['total_count']
+    num_entries_in_folder = b_folder["item_collection"]["total_count"]
     limit = 100
-    for offset in range(0, num_entries_in_folder, limit):
-        for box_item in b_folder.get_items(limit=limit, offset=offset):
-            if box_item['name'] in local_files:
-                local_files.remove(box_item['name'])
-    for local_file in local_files:  # prioritize the local_files not yet on box's server.
-        cur_box_folder = b_folder
-        local_path = os.path.join(path, local_file)
-        if os.path.isfile(local_path):
-            upload_queue.put([os.path.getmtime(local_path), partial(cur_box_folder.upload, local_path, local_file),
-                              oauth_obj])
+    local_files_walk_pre_process(
+        b_folder, limit, local_files, num_entries_in_folder, oauth_obj, path
+    )
     ids_in_folder = []
     for offset in range(0, num_entries_in_folder, limit):
-        while True:
-            try:
-                folder_items = [item for item in b_folder.get_items(limit=limit, offset=offset)]
-                break
-            except Exception:
-                time.sleep(5)
+        folder_items = get_folder_items_from_box_for_walk(b_folder, limit, offset)
         for box_item in folder_items:
-            ids_in_folder.append(box_item['id'])
-            if box_item['name'] in local_files:
-                local_files.remove(box_item['name'])
-            if box_item['type'] == 'folder':
-                local_path = os.path.join(path, box_item['name'])
+            ids_in_folder.append(box_item["id"])
+            if box_item["name"] in local_files:
+                local_files.remove(box_item["name"])
+            if box_item["type"] == "folder":
+                local_path = os.path.join(path, box_item["name"])
                 fresh_download = False
                 if not os.path.isdir(local_path):
                     os.mkdir(local_path)
                     fresh_download = True
                 retry_limit = 15
-                for i in range(0, retry_limit):
-                    try:
-                        redis_set(cache_client=r_c, cloud_item=box_item,
-                                  last_modified_time=os.path.getmtime(local_path),
-                                  box_dir_path=BOX_DIR, fresh_download=fresh_download,
-                                  folder=os.path.dirname(local_path))
-                        box_folder_obj = client.folder(folder_id=box_item['id']).get()
-                        walk_and_notify_and_download_tree(local_path,
-                                                          box_folder_obj,
-                                                          oauth_obj, oauth_meta_info,
-                                                          p_id=box_folder['id'], bottle_app=bottle_app, file_event_handler=file_event_handler, oauth_lock_instance=oauth_lock_instance)
-                    except BoxAPIException as e:
-                        crate_logger.debug("Box error occurred.")
-                        if e.status == 404:
-                            crate_logger.debug('Box says: {obj_id}, '
-                                               '{obj_name}, is a 404 status.'.format(obj_id=box_item['id'],
-                                                                                     obj_name=box_item[
-                                                                                         'name']))
-                            crate_logger.debug(
-                                'But, this is a folder, we do not handle recursive folder deletes correctly yet.')
-                            break
-                    except (ConnectionError, ConnectionResetError, BrokenPipeError):
-                        crate_logger.debug('Attempt {idx}/{limit}'.format(idx=i+1, limit=retry_limit), exc_info=True)
-                    else:
-                        if i:
-                            crate_logger.debug("Succeeded on retry.")
-                        break
+                kick_off_sub_directory_box_folder_download_walk(
+                    bottle_app,
+                    box_folder,
+                    box_item,
+                    client,
+                    file_event_handler,
+                    fresh_download,
+                    local_path,
+                    oauth_lock_instance,
+                    oauth_meta_info,
+                    oauth_obj,
+                    retry_limit,
+                )
             else:
-                try:
-                    file_obj = box_item
-                    download_queue.put((file_obj, os.path.join(path, box_item['name']), oauth_obj))
-                except BoxAPIException as e:
-                    crate_logger.debug("Error occurred", exc_info=True)
-                    if e.status == 404:
-                        crate_logger.debug('Box says: {obj_id}, {obj_name}, '
-                                           'is a 404 status.'.format(obj_id=box_item['id'], obj_name=box_item['name']))
-                        if r_c.exists(redis_key(box_item['id'])):
-                            crate_logger.debug('Deleting {obj_id}, '
-                                               '{obj_name}'.format(obj_id=box_item['id'], obj_name=box_item['name']))
-                            r_c.delete(redis_key(box_item['id']))
-    redis_set(cache_client=r_c, cloud_item=b_folder, last_modified_time=os.path.getmtime(path),
-              box_dir_path=BOX_DIR, fresh_download=not r_c.exists(redis_key(box_folder['id'])),
-              folder=os.path.dirname(path),
-              sub_ids=ids_in_folder, parent_id=p_id)
+                kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path)
+    redis_set(
+        cache_client=r_c,
+        cloud_item=b_folder,
+        last_modified_time=os.path.getmtime(path),
+        box_dir_path=BOX_DIR,
+        fresh_download=not r_c.exists(redis_key(box_folder["id"])),
+        folder=os.path.dirname(path),
+        sub_ids=ids_in_folder,
+        parent_id=p_id,
+    )
 
 
-def re_walk(path, box_folder, client, oauth_obj, oauth_meta_info, bottle_app=None, file_event_handler=None, oauth_lock_instance=None):
+def get_folder_items_from_box_for_walk(b_folder, limit, offset):
+    while True:
+        try:
+            folder_items = [
+                item for item in b_folder.get_items(limit=limit, offset=offset)
+            ]
+            break
+        except Exception:
+            time.sleep(5)
+    return folder_items
+
+
+def oauth_setup_within_directory_walk(bottle_app):
+    client = Client(bottle_app.oauth)
+    client.auth._access_token = r_c.get("diy_crate.auth.access_token")
+    client.auth._refresh_token = r_c.get("diy_crate.auth.refresh_token")
+    if client.auth._access_token:
+        client.auth._access_token = (
+            client.auth._access_token.decode(encoding="utf-8")
+            if isinstance(client.auth._access_token, bytes)
+            else client.auth._access_token
+        )
+    if client.auth._refresh_token:
+        client.auth._refresh_token = (
+            client.auth._refresh_token.decode(encoding="utf-8")
+            if isinstance(client.auth._refresh_token, bytes)
+            else client.auth._refresh_token
+        )
+    return client
+
+
+def kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path):
+    try:
+        file_obj = box_item
+        download_queue.put((file_obj, os.path.join(path, box_item["name"]), oauth_obj))
+    except BoxAPIException as e:
+        crate_logger.debug("Error occurred", exc_info=True)
+        if e.status == 404:
+            crate_logger.debug(
+                "Box says: {obj_id}, {obj_name}, "
+                "is a 404 status.".format(
+                    obj_id=box_item["id"], obj_name=box_item["name"]
+                )
+            )
+            if r_c.exists(redis_key(box_item["id"])):
+                crate_logger.debug(
+                    "Deleting {obj_id}, "
+                    "{obj_name}".format(
+                        obj_id=box_item["id"], obj_name=box_item["name"]
+                    )
+                )
+                r_c.delete(redis_key(box_item["id"]))
+
+
+def kick_off_sub_directory_box_folder_download_walk(
+    bottle_app,
+    box_folder,
+    box_item,
+    client,
+    file_event_handler,
+    fresh_download,
+    local_path,
+    oauth_lock_instance,
+    oauth_meta_info,
+    oauth_obj,
+    retry_limit,
+):
+    for i in range(0, retry_limit):
+        try:
+            redis_set(
+                cache_client=r_c,
+                cloud_item=box_item,
+                last_modified_time=os.path.getmtime(local_path),
+                box_dir_path=BOX_DIR,
+                fresh_download=fresh_download,
+                folder=os.path.dirname(local_path),
+            )
+            box_folder_obj = client.folder(folder_id=box_item["id"]).get()
+            walk_and_notify_and_download_tree(
+                local_path,
+                box_folder_obj,
+                oauth_obj,
+                oauth_meta_info,
+                p_id=box_folder["id"],
+                bottle_app=bottle_app,
+                file_event_handler=file_event_handler,
+                oauth_lock_instance=oauth_lock_instance,
+            )
+        except BoxAPIException as e:
+            crate_logger.debug("Box error occurred.")
+            if e.status == 404:
+                crate_logger.debug(
+                    "Box says: {obj_id}, "
+                    "{obj_name}, is a 404 status.".format(
+                        obj_id=box_item["id"], obj_name=box_item["name"]
+                    )
+                )
+                crate_logger.debug(
+                    "But, this is a folder, we do not handle recursive "
+                    "folder deletes correctly yet."
+                )
+                break
+        except (ConnectionError, ConnectionResetError, BrokenPipeError):
+            crate_logger.debug(
+                "Attempt {idx}/{limit}".format(idx=i + 1, limit=retry_limit),
+                exc_info=True,
+            )
+        else:
+            if i:
+                crate_logger.debug("Succeeded on retry.")
+            break
+
+
+def local_files_walk_pre_process(
+    b_folder, limit, local_files, num_entries_in_folder, oauth_obj, path
+):
+    for offset in range(0, num_entries_in_folder, limit):
+        for box_item in b_folder.get_items(limit=limit, offset=offset):
+            if box_item["name"] in local_files:
+                local_files.remove(box_item["name"])
+    for (
+        local_file
+    ) in local_files:  # prioritize the local_files not yet on box's server.
+        cur_box_folder = b_folder
+        local_path = os.path.join(path, local_file)
+        if os.path.isfile(local_path):
+            upload_queue.put(
+                [
+                    os.path.getmtime(local_path),
+                    partial(cur_box_folder.upload, local_path, local_file),
+                    oauth_obj,
+                ]
+            )
+
+
+def re_walk(
+    path,
+    box_folder,
+    client,
+    oauth_obj,
+    oauth_meta_info,
+    bottle_app=None,
+    file_event_handler=None,
+    oauth_lock_instance=None,
+):
     """
 
     :param path:
@@ -138,5 +258,13 @@ def re_walk(path, box_folder, client, oauth_obj, oauth_meta_info, bottle_app=Non
     :return:
     """
     while True:
-        walk_and_notify_and_download_tree(path, box_folder, oauth_obj, oauth_meta_info, bottle_app=bottle_app, file_event_handler=file_event_handler, oauth_lock_instance=oauth_lock_instance)
+        walk_and_notify_and_download_tree(
+            path,
+            box_folder,
+            oauth_obj,
+            oauth_meta_info,
+            bottle_app=bottle_app,
+            file_event_handler=file_event_handler,
+            oauth_lock_instance=oauth_lock_instance,
+        )
         time.sleep(3600)  # once an hour we walk the tree

@@ -8,7 +8,7 @@ include LICENSE
 
 include *.py
 
-exclude Makefile
+exclude Makefile .flake8 .pre-commit-config.yaml
 
 # Include the project's internal logic
 recursive-include diycrate *
