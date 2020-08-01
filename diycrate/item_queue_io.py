@@ -40,13 +40,21 @@ def upload_queue_processor():
             args = callable_up.args if isinstance(callable_up, partial) else None
             num_retries = 15
             perform_upload(
-                args, callable_up, last_modified_time, num_retries, oauth, was_list
+                args,
+                callable_up,
+                last_modified_time,
+                num_retries,
+                oauth,
+                was_list,
+                retry_limit=num_retries,
             )
             upload_queue.task_done()
 
 
-def perform_upload(args, callable_up, last_modified_time, num_retries, oauth, was_list):
-    for x in range(15):
+def perform_upload(
+    args, callable_up, last_modified_time, num_retries, oauth, was_list, retry_limit=15
+):
+    for x in range(retry_limit):
         try:
             ret_val = callable_up()
             if was_list:
