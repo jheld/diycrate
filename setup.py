@@ -31,7 +31,7 @@ extras_require = {
 
 setup(
     name="diycrate",
-    version="0.2.11.0rc6",
+    version="0.2.11.0rc7",
     author="Jason Held",
     author_email="jasonsheld@gmail.com",
     description="box.com for linux -- unofficial, based on python SDK",
