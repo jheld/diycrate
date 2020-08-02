@@ -40,13 +40,21 @@ def upload_queue_processor():
             args = callable_up.args if isinstance(callable_up, partial) else None
             num_retries = 15
             perform_upload(
-                args, callable_up, last_modified_time, num_retries, oauth, was_list
+                args,
+                callable_up,
+                last_modified_time,
+                num_retries,
+                oauth,
+                was_list,
+                retry_limit=num_retries,
             )
             upload_queue.task_done()
 
 
-def perform_upload(args, callable_up, last_modified_time, num_retries, oauth, was_list):
-    for x in range(15):
+def perform_upload(
+    args, callable_up, last_modified_time, num_retries, oauth, was_list, retry_limit=15
+):
+    for x in range(retry_limit):
         try:
             ret_val = callable_up()
             if was_list:
@@ -112,8 +120,8 @@ def download_queue_processor():
                 download_queue.task_done()
 
 
-def perform_download(item, path):
-    for i in range(15):
+def perform_download(item, path, retry_limit=15):
+    for i in range(retry_limit):
         if os.path.basename(path).startswith(".~lock"):  # avoid downloading lock files
             break
         try:
@@ -170,32 +178,6 @@ def perform_download(item, path):
             folder=os.path.dirname(path),
         )
         break
-
-
-def download_queue_monitor():
-    """
-
-    :return:
-    """
-    while True:
-        time.sleep(10)
-        if download_queue.not_empty:
-            crate_logger.debug("Download queue size: {}".format(download_queue.qsize()))
-        else:
-            crate_logger.debug("Download queue is empty.")
-
-
-def upload_queue_monitor():
-    """
-
-    :return:
-    """
-    while True:
-        time.sleep(10)
-        if upload_queue.not_empty:
-            crate_logger.debug("Upload queue size: {}".format(upload_queue.qsize()))
-        else:
-            crate_logger.debug("Upload queue is empty.")
 
 
 download_queue = queue.Queue()

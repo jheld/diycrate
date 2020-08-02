@@ -27,7 +27,6 @@ def walk_and_notify_and_download_tree(
     p_id=None,
     bottle_app=None,
     file_event_handler=None,
-    oauth_lock_instance=None,
 ):
     """
     Walk the path recursively and add watcher and create the path.
@@ -38,7 +37,6 @@ def walk_and_notify_and_download_tree(
     :param p_id:
     :param bottle_app:
     :param file_event_handler:
-    :param oauth_lock_instance:
     :return:
     """
     if os.path.isdir(path):
@@ -84,7 +82,6 @@ def walk_and_notify_and_download_tree(
                     file_event_handler,
                     fresh_download,
                     local_path,
-                    oauth_lock_instance,
                     oauth_meta_info,
                     oauth_obj,
                     retry_limit,
@@ -165,7 +162,6 @@ def kick_off_sub_directory_box_folder_download_walk(
     file_event_handler,
     fresh_download,
     local_path,
-    oauth_lock_instance,
     oauth_meta_info,
     oauth_obj,
     retry_limit,
@@ -189,7 +185,6 @@ def kick_off_sub_directory_box_folder_download_walk(
                 p_id=box_folder["id"],
                 bottle_app=bottle_app,
                 file_event_handler=file_event_handler,
-                oauth_lock_instance=oauth_lock_instance,
             )
         except BoxAPIException as e:
             crate_logger.debug("Box error occurred.")
@@ -205,7 +200,7 @@ def kick_off_sub_directory_box_folder_download_walk(
                     "folder deletes correctly yet."
                 )
                 break
-        except (ConnectionError, ConnectionResetError, BrokenPipeError):
+        except (ConnectionError, ConnectionResetError, BrokenPipeError, OSError):
             crate_logger.debug(
                 "Attempt {idx}/{limit}".format(idx=i + 1, limit=retry_limit),
                 exc_info=True,
@@ -241,18 +236,15 @@ def local_files_walk_pre_process(
 def re_walk(
     path,
     box_folder,
-    client,
     oauth_obj,
     oauth_meta_info,
     bottle_app=None,
     file_event_handler=None,
-    oauth_lock_instance=None,
 ):
     """
 
     :param path:
     :param box_folder:
-    :param client:
     :param oauth_obj:
     :param bottle_app:
     :return:
@@ -265,6 +257,5 @@ def re_walk(
             oauth_meta_info,
             bottle_app=bottle_app,
             file_event_handler=file_event_handler,
-            oauth_lock_instance=oauth_lock_instance,
         )
         time.sleep(3600)  # once an hour we walk the tree
