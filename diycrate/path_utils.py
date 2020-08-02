@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+from datetime import timedelta
 from functools import partial
 
 
@@ -12,6 +13,7 @@ from boxsdk.client import Client
 from .file_operations import wm, mask, BOX_DIR
 from .item_queue_io import download_queue, upload_queue
 from .cache_utils import redis_key, r_c, redis_set
+from .iter_utils import SafeIter
 from .log_utils import setup_logger
 
 setup_logger()
@@ -46,6 +48,7 @@ def walk_and_notify_and_download_tree(
         raise ValueError(
             "path: {path} is not a path; " "cannot walk it.".format(path=path)
         )
+    crate_logger.debug("Walking path: {path}".format(path=path))
     client = oauth_setup_within_directory_walk(bottle_app)
     while True:
         try:
@@ -55,39 +58,41 @@ def walk_and_notify_and_download_tree(
             crate_logger.warning("Moving on with sleep", exc_info=True)
             time.sleep(5)
 
-    num_entries_in_folder = b_folder["item_collection"]["total_count"]
     limit = 100
-    local_files_walk_pre_process(
-        b_folder, limit, local_files, num_entries_in_folder, oauth_obj, path
-    )
+    local_files_walk_pre_process(b_folder, limit, local_files, oauth_obj, path)
     ids_in_folder = []
-    for offset in range(0, num_entries_in_folder, limit):
-        folder_items = get_folder_items_from_box_for_walk(b_folder, limit, offset)
-        for box_item in folder_items:
+    offset = 0
+    folder_items = b_folder.get_items(limit=limit, offset=offset)
+
+    safe_iter = SafeIter(folder_items)
+    for box_item in safe_iter:
+        if box_item is None:
+            continue
+        if box_item["id"] not in ids_in_folder:
             ids_in_folder.append(box_item["id"])
-            if box_item["name"] in local_files:
-                local_files.remove(box_item["name"])
-            if box_item["type"] == "folder":
-                local_path = os.path.join(path, box_item["name"])
-                fresh_download = False
-                if not os.path.isdir(local_path):
-                    os.mkdir(local_path)
-                    fresh_download = True
-                retry_limit = 15
-                kick_off_sub_directory_box_folder_download_walk(
-                    bottle_app,
-                    box_folder,
-                    box_item,
-                    client,
-                    file_event_handler,
-                    fresh_download,
-                    local_path,
-                    oauth_meta_info,
-                    oauth_obj,
-                    retry_limit,
-                )
-            else:
-                kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path)
+        if box_item["name"] in local_files:
+            local_files.remove(box_item["name"])
+        if box_item["type"] == "folder":
+            local_path = os.path.join(path, box_item["name"])
+            fresh_download = False
+            if not os.path.isdir(local_path):
+                os.mkdir(local_path)
+                fresh_download = True
+            retry_limit = 15
+            kick_off_sub_directory_box_folder_download_walk(
+                bottle_app,
+                box_folder,
+                box_item,
+                client,
+                file_event_handler,
+                fresh_download,
+                local_path,
+                oauth_meta_info,
+                oauth_obj,
+                retry_limit,
+            )
+        else:
+            kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path)
     redis_set(
         cache_client=r_c,
         cloud_item=b_folder,
@@ -98,18 +103,6 @@ def walk_and_notify_and_download_tree(
         sub_ids=ids_in_folder,
         parent_id=p_id,
     )
-
-
-def get_folder_items_from_box_for_walk(b_folder, limit, offset):
-    while True:
-        try:
-            folder_items = [
-                item for item in b_folder.get_items(limit=limit, offset=offset)
-            ]
-            break
-        except Exception:
-            time.sleep(5)
-    return folder_items
 
 
 def oauth_setup_within_directory_walk(bottle_app):
@@ -152,6 +145,7 @@ def kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path):
                     )
                 )
                 r_c.delete(redis_key(box_item["id"]))
+        raise e
 
 
 def kick_off_sub_directory_box_folder_download_walk(
@@ -177,15 +171,6 @@ def kick_off_sub_directory_box_folder_download_walk(
                 folder=os.path.dirname(local_path),
             )
             box_folder_obj = client.folder(folder_id=box_item["id"]).get()
-            walk_and_notify_and_download_tree(
-                local_path,
-                box_folder_obj,
-                oauth_obj,
-                oauth_meta_info,
-                p_id=box_folder["id"],
-                bottle_app=bottle_app,
-                file_event_handler=file_event_handler,
-            )
         except BoxAPIException as e:
             crate_logger.debug("Box error occurred.")
             if e.status == 404:
@@ -208,16 +193,24 @@ def kick_off_sub_directory_box_folder_download_walk(
         else:
             if i:
                 crate_logger.debug("Succeeded on retry.")
+            walk_and_notify_and_download_tree(
+                local_path,
+                box_folder_obj,
+                oauth_obj,
+                oauth_meta_info,
+                p_id=box_folder["id"],
+                bottle_app=bottle_app,
+                file_event_handler=file_event_handler,
+            )
             break
 
 
 def local_files_walk_pre_process(
-    b_folder, limit, local_files, num_entries_in_folder, oauth_obj, path
+    b_folder, limit, local_files, oauth_obj, path, offset=0
 ):
-    for offset in range(0, num_entries_in_folder, limit):
-        for box_item in b_folder.get_items(limit=limit, offset=offset):
-            if box_item["name"] in local_files:
-                local_files.remove(box_item["name"])
+    for box_item in b_folder.get_items(limit=limit, offset=offset):
+        if box_item["name"] in local_files:
+            local_files.remove(box_item["name"])
     for (
         local_file
     ) in local_files:  # prioritize the local_files not yet on box's server.
@@ -246,10 +239,14 @@ def re_walk(
     :param path:
     :param box_folder:
     :param oauth_obj:
+    :param oauth_meta_info:
     :param bottle_app:
+    :param file_event_handler:
     :return:
     """
     while True:
+        start = time.time()
+        crate_logger.info("Starting walk.")
         walk_and_notify_and_download_tree(
             path,
             box_folder,
@@ -257,5 +254,17 @@ def re_walk(
             oauth_meta_info,
             bottle_app=bottle_app,
             file_event_handler=file_event_handler,
+        )
+        end = time.time()
+        duration = int(end - start)
+        if duration >= 60:
+            duration = round(timedelta(seconds=duration) / timedelta(minutes=1), 2)
+            unit = "m"
+        else:
+            unit = "s"
+        crate_logger.info(
+            "Finished walking! Took {duration}{unit}".format(
+                duration=duration, unit=unit
+            )
         )
         time.sleep(3600)  # once an hour we walk the tree

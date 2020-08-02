@@ -14,6 +14,7 @@ from requests import ConnectionError
 from urllib3.exceptions import ProtocolError
 
 from .cache_utils import redis_key, redis_get, r_c
+from .iter_utils import SafeIter
 from .log_utils import setup_logger
 
 setup_logger()
@@ -146,20 +147,35 @@ class EventHandler(pyinotify.ProcessEvent):
         """
         for folder in folders_to_traverse:
             did_find_folder = False
-            num_entries = cur_box_folder["item_collection"]["total_count"]
             limit = 100
-            for offset in range(0, num_entries, limit):
-                for entry in cur_box_folder.get_items(offset=offset, limit=limit):
-                    if folder == entry["name"] and entry["type"] == "folder":
-                        did_find_folder = True
-                        cur_box_folder = EventHandler.get_folder(client, entry["id"])
-                        break  # found this piece of the path, keep going
+            offset = 0
+            folder_items_generator = cur_box_folder.get_items(
+                offset=offset, limit=limit
+            )
+            while True:
+                try:
+                    for entry in folder_items_generator:
+                        if folder == entry["name"] and entry["type"] == "folder":
+                            did_find_folder = True
+                            cur_box_folder = EventHandler.get_folder(
+                                client, entry["id"]
+                            )
+                            break  # found this piece of the path, keep going
+                except BoxAPIException:
+                    time.sleep(5)
+                else:
+                    break
             if not did_find_folder:
                 try:
                     cur_box_folder = cur_box_folder.create_subfolder(folder).get()
                     crate_logger.debug("Subfolder creation: {}".format(event.pathname))
-                except BoxAPIException as e:
-                    crate_logger.debug(e)
+                except BoxAPIException:
+                    crate_logger.debug(
+                        "Box exception as we try to create a sub-folder {folder}".format(
+                            folder=folder
+                        ),
+                        exc_info=True,
+                    )
         return cur_box_folder
 
     def process_event(self, event, operation):
@@ -214,18 +230,22 @@ class EventHandler(pyinotify.ProcessEvent):
         )  # true if we are a regular file :)
         is_file = os.path.isfile(event.pathname)
         is_dir = os.path.isdir(event.pathname)
-        num_entries = cur_box_folder["item_collection"]["total_count"]
         limit = 100
-        for offset in range(0, num_entries, limit):
-            for entry in cur_box_folder.get_items(offset=offset, limit=limit):
-                did_find_the_file = (
-                    is_file and entry["type"] == "file" and entry["name"] == event.name
-                )
-                did_find_the_folder = (
-                    is_dir and entry["type"] == "folder" and entry["name"] == event.name
-                )
-                if did_find_the_file:
-                    break
+        offset = 0
+        safe_iter = SafeIter(
+            cur_box_folder.get_items(offset=offset, limit=limit), path=event.pathname
+        )
+        for entry in safe_iter:
+            if entry is None:
+                continue
+            did_find_the_file = (
+                is_file and entry["type"] == "file" and entry["name"] == event.name
+            )
+            did_find_the_folder = (
+                is_dir and entry["type"] == "folder" and entry["name"] == event.name
+            )
+            if did_find_the_file:
+                break
         # not a box file/folder (though could have been copied from a local box item)
         if is_file and not did_find_the_file:
             last_modified_time = os.path.getmtime(event.pathname)
@@ -271,100 +291,91 @@ class EventHandler(pyinotify.ProcessEvent):
         )  # true if we are a regular file :)
         is_file = os.path.isfile(event.pathname)
         is_dir = os.path.isdir(event.pathname)
-        num_entries = cur_box_folder["item_collection"]["total_count"]
         limit = 100
-        for offset in range(0, num_entries, limit):
-            for entry in cur_box_folder.get_items(offset=offset, limit=limit):
-                did_find_the_file = (
-                    is_file and entry["type"] == "file" and entry["name"] == event.name
-                )
-                did_find_the_folder = (
-                    is_dir and entry["type"] == "folder" and entry["name"] == event.name
-                )
-                if did_find_the_file:
-                    last_modified_time = os.path.getmtime(event.pathname)
-                    if entry["id"] not in self.files_from_box:
-                        cur_file = client.file(file_id=entry["id"]).get()
-                        can_update = True
-                        was_versioned = r_c.exists(redis_key(cur_file["id"]))
-                        try:
-                            info = redis_get(r_c, cur_file) if was_versioned else None
-                            info = (
-                                info
-                                if was_versioned
-                                else {
-                                    "fresh_download": True,
-                                    "etag": "0",
-                                    "time_stamp": 0,
-                                }
-                            )
-                            item_version = info
-                            if cur_file["etag"] == item_version["etag"] and (
-                                (
-                                    item_version["fresh_download"]
-                                    and (
-                                        item_version["time_stamp"] >= last_modified_time
-                                    )
-                                )
-                                or (
-                                    not item_version["fresh_download"]
-                                    and item_version["time_stamp"] >= last_modified_time
-                                )
-                            ):
-                                can_update = False
-                            if can_update:
-                                self.upload_queue.put(
-                                    [
-                                        last_modified_time,
-                                        partial(
-                                            cur_file.update_contents, event.pathname
-                                        ),
-                                        self.oauth,
-                                    ]
-                                )
-                            else:
-                                is_new_time_stamp = (
-                                    item_version["time_stamp"] >= last_modified_time
-                                )
-                                crate_logger.debug(
-                                    "Skipping the update because not "
-                                    "versioned: {not_versioned}, "
-                                    "fresh_download: {fresh_download}, "
-                                    "version time_stamp >= "
-                                    "new time stamp: {new_time_stamp}, "
-                                    "event pathname: {path_name}, "
-                                    "cur file id: {obj_id}".format(
-                                        not_versioned=not was_versioned,
-                                        fresh_download=item_version["fresh_download"],
-                                        new_time_stamp=is_new_time_stamp,
-                                        path_name=event.pathname,
-                                        obj_id=cur_file["id"],
-                                    )
-                                )
-                        except TypeError:
-                            crate_logger.debug("Error occurred", exc_info=True)
-                        except Exception:
-                            crate_logger.debug("Error occurred", exc_info=True)
-
-                    else:
-                        self.files_from_box.remove(
-                            entry["id"]
-                        )  # just wrote if, assuming create event didn't run
-                    break
-                elif did_find_the_folder:
-                    if entry["id"] not in self.folders_from_box:
-                        crate_logger.debug(
-                            "Cannot create a subfolder when it already exists: {}".format(
-                                event.pathname
-                            )
+        offset = 0
+        for entry in cur_box_folder.get_items(offset=offset, limit=limit):
+            did_find_the_file = (
+                is_file and entry["type"] == "file" and entry["name"] == event.name
+            )
+            did_find_the_folder = (
+                is_dir and entry["type"] == "folder" and entry["name"] == event.name
+            )
+            if did_find_the_file:
+                last_modified_time = os.path.getmtime(event.pathname)
+                if entry["id"] not in self.files_from_box:
+                    cur_file = client.file(file_id=entry["id"]).get()
+                    can_update = True
+                    was_versioned = r_c.exists(redis_key(cur_file["id"]))
+                    try:
+                        info = redis_get(r_c, cur_file) if was_versioned else None
+                        info = (
+                            info
+                            if was_versioned
+                            else {"fresh_download": True, "etag": "0", "time_stamp": 0}
                         )
-                        # cur_folder = client.folder(folder_id=entry['id']).get()
-                        # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
-                    else:
-                        self.folders_from_box.remove(
-                            entry["id"]
-                        )  # just wrote if, assuming create event didn't run
-                    break
+                        item_version = info
+                        if cur_file["etag"] == item_version["etag"] and (
+                            (
+                                item_version["fresh_download"]
+                                and (item_version["time_stamp"] >= last_modified_time)
+                            )
+                            or (
+                                not item_version["fresh_download"]
+                                and item_version["time_stamp"] >= last_modified_time
+                            )
+                        ):
+                            can_update = False
+                        if can_update:
+                            self.upload_queue.put(
+                                [
+                                    last_modified_time,
+                                    partial(cur_file.update_contents, event.pathname),
+                                    self.oauth,
+                                ]
+                            )
+                        else:
+                            is_new_time_stamp = (
+                                item_version["time_stamp"] >= last_modified_time
+                            )
+                            crate_logger.debug(
+                                "Skipping the update because not "
+                                "versioned: {not_versioned}, "
+                                "fresh_download: {fresh_download}, "
+                                "version time_stamp >= "
+                                "new time stamp: {new_time_stamp}, "
+                                "event pathname: {path_name}, "
+                                "cur file id: {obj_id}".format(
+                                    not_versioned=not was_versioned,
+                                    fresh_download=item_version["fresh_download"],
+                                    new_time_stamp=is_new_time_stamp,
+                                    path_name=event.pathname,
+                                    obj_id=cur_file["id"],
+                                )
+                            )
+                    except TypeError:
+                        crate_logger.debug("Error occurred", exc_info=True)
+                    except Exception:
+                        crate_logger.debug("Error occurred", exc_info=True)
+
+                else:
+                    self.files_from_box.remove(
+                        entry["id"]
+                    )  # just wrote if, assuming create event didn't run
+                break
+            elif did_find_the_folder:
+                if entry["id"] not in self.folders_from_box:
+                    crate_logger.debug(
+                        "Cannot create a subfolder when it already exists: {}".format(
+                            event.pathname
+                        )
+                    )
+                    # cur_folder = client.folder(folder_id=entry['id']).get()
+                    # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
+                else:
+                    self.folders_from_box.remove(
+                        entry["id"]
+                    )  # just wrote if, assuming create event didn't run
+                break
         if is_file and not did_find_the_file:
             crate_logger.debug("Uploading contents...: {}".format(event.pathname))
             last_modified_time = os.path.getmtime(event.pathname)
@@ -412,55 +423,54 @@ class EventHandler(pyinotify.ProcessEvent):
         )  # true if we are a regular file :)
         is_file = os.path.isfile(event.pathname)
         is_dir = os.path.isdir(event.pathname)
-        num_entries = cur_box_folder["item_collection"]["total_count"]
         limit = 100
-        for offset in range(0, num_entries, limit):
-            for entry in cur_box_folder.get_items(offset=offset, limit=limit):
-                did_find_the_file = (
-                    is_file and entry["type"] == "file" and entry["name"] == event.name
+        offset = 0
+        for entry in cur_box_folder.get_items(offset=offset, limit=limit):
+            did_find_the_file = (
+                is_file and entry["type"] == "file" and entry["name"] == event.name
+            )
+            did_find_the_folder = (
+                is_dir and entry["type"] == "folder" and entry["name"] == event.name
+            )
+            if did_find_the_file:
+                dwld_key = "diy_crate.breadcrumb.create_from_box.{path}".format(
+                    path=event.pathname
                 )
-                did_find_the_folder = (
-                    is_dir and entry["type"] == "folder" and entry["name"] == event.name
-                )
-                if did_find_the_file:
-                    dwld_key = "diy_crate.breadcrumb.create_from_box.{path}".format(
-                        path=event.pathname
+                file_created_from_download = r_c.exists(dwld_key)
+                if file_created_from_download:
+                    self.files_from_box.append(entry["id"])
+                    r_c.delete(dwld_key)
+                if entry["id"] not in self.files_from_box:
+                    # more accurately, was this created offline?
+                    AssertionError(
+                        False,
+                        "We should not be able to create a "
+                        "file that exists in box; should be a close/modify.",
                     )
-                    file_created_from_download = r_c.exists(dwld_key)
-                    if file_created_from_download:
-                        self.files_from_box.append(entry["id"])
-                        r_c.delete(dwld_key)
-                    if entry["id"] not in self.files_from_box:
-                        # more accurately, was this created offline?
-                        AssertionError(
-                            False,
-                            "We should not be able to create a "
-                            "file that exists in box; should be a close/modify.",
+                    crate_logger.debug("Update the file: {}".format(event.pathname))
+                    a_file = client.file(file_id=entry["id"]).get()
+                    # seem it is possible to get more than one create
+                    # (without having a delete in between)
+                    self.upload_queue.put(
+                        partial(a_file.update_contents, event.pathname)
+                    )
+                    # cur_box_folder.upload(event.pathname, event.name)
+                else:
+                    crate_logger.debug(
+                        "Created from box: {fpath}, but create flag ran on "
+                        "our fs too, so we are skipping the logic to upload.".format(
+                            fpath=event.pathname
                         )
-                        crate_logger.debug("Update the file: {}".format(event.pathname))
-                        a_file = client.file(file_id=entry["id"]).get()
-                        # seem it is possible to get more than one create
-                        # (without having a delete in between)
-                        self.upload_queue.put(
-                            partial(a_file.update_contents, event.pathname)
-                        )
-                        # cur_box_folder.upload(event.pathname, event.name)
-                    else:
-                        crate_logger.debug(
-                            "Created from box: {fpath}, but create flag ran on "
-                            "our fs too, so we are skipping the logic to upload.".format(
-                                fpath=event.pathname
-                            )
-                        )
-                        self.files_from_box.remove(entry["id"])  # just downloaded it
-                    break
-                elif did_find_the_folder:
-                    # we are not going to re-create the folder, but we are
-                    # also not checking if the contents in this
-                    # local creation are different from the contents in box.
-                    if entry["id"] in self.folders_from_box:
-                        self.folders_from_box.remove(entry["id"])  # just downloaded it
-                    break
+                    )
+                    self.files_from_box.remove(entry["id"])  # just downloaded it
+                break
+            elif did_find_the_folder:
+                # we are not going to re-create the folder, but we are
+                # also not checking if the contents in this
+                # local creation are different from the contents in box.
+                if entry["id"] in self.folders_from_box:
+                    self.folders_from_box.remove(entry["id"])  # just downloaded it
+                break
         if is_file and not did_find_the_file:
             crate_logger.debug("Upload the file: {}".format(event.pathname))
             last_modified_time = os.path.getctime(event.pathname)
@@ -483,6 +493,7 @@ class EventHandler(pyinotify.ProcessEvent):
         crate_logger.debug(folders_to_traverse)
         client = Client(self.oauth)
         failed = False
+        box_folder = None
         while not failed:
             try:
                 box_folder = client.folder(folder_id="0").get()
@@ -512,103 +523,81 @@ class EventHandler(pyinotify.ProcessEvent):
         is_file = os.path.isfile(dest_event.pathname)
         is_dir = os.path.isdir(dest_event.pathname)
         move_from_remote = False
-        src_num_entries = src_box_folder["item_collection"]["total_count"]
         limit = 100
-        for offset in range(0, src_num_entries, limit):
-            for entry in src_box_folder.get_items(offset=offset, limit=limit):
-                did_find_src_file = (
-                    is_file
-                    and entry["name"] == src_event.name
-                    and entry["type"] == "file"
-                )
-                did_find_src_folder = (
-                    is_dir
-                    and entry["name"] == src_event.name
-                    and entry["type"] == "folder"
-                )
-                if did_find_src_file:
-                    src_file = client.file(file_id=entry["id"]).get()
-                    if is_rename:
-                        src_file.rename(dest_event.name)
-                    else:
-                        did_find_cur_file = os.path.isdir(
-                            dest_event.pathname
-                        )  # should check box instead
-                        did_find_cur_folder = os.path.isfile(
-                            dest_event.pathname
-                        )  # should check box instead
-                        cur_num_entries = cur_box_folder["item_collection"][
-                            "total_count"
-                        ]
-                        for cur_offset in range(0, cur_num_entries, limit):
-                            for cur_entry in cur_box_folder.get_items(
-                                offset=cur_offset, limit=limit
-                            ):
-                                matching_name = cur_entry["name"] == dest_event.name
-                                did_find_cur_file = (
-                                    is_file
-                                    and matching_name
-                                    and isinstance(cur_entry, File)
-                                )
-                                did_find_cur_folder = (
-                                    is_dir
-                                    and matching_name
-                                    and isinstance(cur_entry, Folder)
-                                )
-                                if did_find_cur_file:
-                                    self.upload_queue.put(
-                                        [
-                                            os.path.getmtime(dest_event.pathname),
-                                            partial(
-                                                cur_entry.update_contents,
-                                                dest_event.pathname,
-                                            ),
-                                            self.oauth,
-                                        ]
-                                    )
-                                    self.upload_queue.put(partial(src_file.delete))
-                                    break
-                                elif did_find_cur_folder:
-                                    crate_logger.debug(
-                                        "do not currently support moving a same name folder "
-                                        "into parent with"
-                                        "folder inside of the same name -- would may need "
-                                        "to update the contents"
-                                    )
-                                    break
-                            if (is_file and did_find_cur_file) or (
-                                is_dir and did_find_cur_folder
-                            ):
-                                break
-                        if is_file and not did_find_cur_file:
-                            src_file.move(cur_box_folder)
-                            # do not yet support moving and renaming in one go
-                            assert src_file["name"] == dest_event.name
-                elif did_find_src_folder:
-                    src_folder = client.folder(folder_id=entry["id"]).get()
-                    if is_rename:
-                        src_folder.rename(dest_event.name)
-                    else:
-                        src_folder.move(cur_box_folder)
+        offset = 0
+        folder_gen = src_box_folder.get_items(offset=offset, limit=limit)
+        safe_iter = SafeIter(folder_gen, path=dest_event.name)
+        for entry in safe_iter:
+            if entry is None:
+                continue
+            did_find_src_file = (
+                is_file and entry["name"] == src_event.name and entry["type"] == "file"
+            )
+            did_find_src_folder = (
+                is_dir and entry["name"] == src_event.name and entry["type"] == "folder"
+            )
+            if did_find_src_file:
+                src_file = client.file(file_id=entry["id"]).get()
+                if is_rename:
+                    src_file.rename(dest_event.name)
+                else:
+                    did_find_cur_file = os.path.isdir(
+                        dest_event.pathname
+                    )  # should check box instead
+                    cur_offset = 0
+                    for cur_entry in cur_box_folder.get_items(
+                        offset=cur_offset, limit=limit
+                    ):
+                        matching_name = cur_entry["name"] == dest_event.name
+                        did_find_cur_file = (
+                            is_file and matching_name and isinstance(cur_entry, File)
+                        )
+                        did_find_cur_folder = (
+                            is_dir and matching_name and isinstance(cur_entry, Folder)
+                        )
+                        if did_find_cur_file:
+                            self.upload_queue.put(
+                                [
+                                    os.path.getmtime(dest_event.pathname),
+                                    partial(
+                                        cur_entry.update_contents, dest_event.pathname
+                                    ),
+                                    self.oauth,
+                                ]
+                            )
+                            self.upload_queue.put(partial(src_file.delete))
+                            break
+                        elif did_find_cur_folder:
+                            crate_logger.debug(
+                                "do not currently support moving a same name folder "
+                                "into parent with"
+                                "folder inside of the same name -- would may need "
+                                "to update the contents"
+                            )
+                            break
+                    if is_file and not did_find_cur_file:
+                        src_file.move(cur_box_folder)
                         # do not yet support moving and renaming in one go
-                        assert src_folder["name"] == dest_event.name
-                elif entry["name"] == dest_event.name:
-                    move_from_remote = True
+                        assert src_file["name"] == dest_event.name
+            elif did_find_src_folder:
+                src_folder = client.folder(folder_id=entry["id"]).get()
+                if is_rename:
+                    src_folder.rename(dest_event.name)
+                else:
+                    src_folder.move(cur_box_folder)
+                    # do not yet support moving and renaming in one go
+                    assert src_folder["name"] == dest_event.name
+            elif entry["name"] == dest_event.name:
+                move_from_remote = True
         if (
             not move_from_remote
         ):  # if it was moved from a different folder on remote, could be false still
-            dest_box_folder = box_folder
-            dest_folders_to_traverse = self.folders_to_traverse(dest_event.path)
-            dest_box_folder = self.traverse_path(
-                client, dest_event, dest_box_folder, dest_folders_to_traverse
-            )
-            dest_num_entries = dest_box_folder["item_collection"]["total_count"]
             limit = 100
-            for offset in range(0, dest_num_entries, limit):
-                for entry in cur_box_folder.get_items(offset=offset, limit=limit):
-                    if entry["name"] == dest_event.name:
-                        move_from_remote = True
-                        break
+            offset = 0
+            for entry in cur_box_folder.get_items(offset=offset, limit=limit):
+                if entry["name"] == dest_event.name:
+                    move_from_remote = True
+                    break
             if not move_from_remote:
                 if is_file and not did_find_src_file:
                     # src file [should] no longer exist[s].
@@ -658,41 +647,40 @@ class EventHandler(pyinotify.ProcessEvent):
                 cur_box_folder["name"] + "not equals " + last_dir,
             )
         event_was_for_dir = "IN_ISDIR".lower() in event.maskname.lower()
-        num_entries = cur_box_folder["item_collection"]["total_count"]
         limit = 100
-        for offset in range(0, num_entries, limit):
-            for entry in cur_box_folder.get_items(offset=offset, limit=limit):
-                if (
-                    not event_was_for_dir
-                    and entry["type"] == "file"
-                    and entry["name"] == event.name
-                ):
-                    if entry["id"] not in self.files_from_box:
-                        cur_file = client.file(file_id=entry["id"]).get()
-                        if (
-                            cur_file.delete()
-                        ):  # does not actually check correctly...unless not "ok" is false
-                            # del version_info[cur_file['id']]
-                            r_c.delete(redis_key(cur_file["id"]))
-                    else:
-                        self.files_from_box.remove(
-                            entry["id"]
-                        )  # just wrote if, assuming create event didn't run
-                    break
-                elif (
-                    event_was_for_dir
-                    and entry["type"] == "folder"
-                    and entry["name"] == event.name
-                ):
-                    if entry["id"] not in self.folders_from_box:
-                        self.get_folder(client, entry["id"]).delete()
-                        # cur_folder = client.folder(folder_id=entry['id']).get()
-                        # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
-                    else:
-                        self.folders_from_box.remove(
-                            entry["id"]
-                        )  # just wrote if, assuming create event didn't run
-                    break
+        offset = 0
+        for entry in cur_box_folder.get_items(offset=offset, limit=limit):
+            if (
+                not event_was_for_dir
+                and entry["type"] == "file"
+                and entry["name"] == event.name
+            ):
+                if entry["id"] not in self.files_from_box:
+                    cur_file = client.file(file_id=entry["id"]).get()
+                    if (
+                        cur_file.delete()
+                    ):  # does not actually check correctly...unless not "ok" is false
+                        # del version_info[cur_file['id']]
+                        r_c.delete(redis_key(cur_file["id"]))
+                else:
+                    self.files_from_box.remove(
+                        entry["id"]
+                    )  # just wrote if, assuming create event didn't run
+                break
+            elif (
+                event_was_for_dir
+                and entry["type"] == "folder"
+                and entry["name"] == event.name
+            ):
+                if entry["id"] not in self.folders_from_box:
+                    self.get_folder(client, entry["id"]).delete()
+                    # cur_folder = client.folder(folder_id=entry['id']).get()
+                    # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
+                else:
+                    self.folders_from_box.remove(
+                        entry["id"]
+                    )  # just wrote if, assuming create event didn't run
+                break
 
     def process_IN_CREATE(self, event):
         """
