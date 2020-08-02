@@ -25,7 +25,7 @@ install_requires = [
 ]
 
 extras_require = {
-    "dev": ["ipython>=7.0", "check-manifest", "black", "flake8", "pre-commit"],
+    "dev": ["ipython", "check-manifest", "black", "flake8", "pre-commit"],
     "test": ["tox", "check-manifest"],
 }
 
