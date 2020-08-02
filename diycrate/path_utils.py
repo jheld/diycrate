@@ -200,7 +200,7 @@ def kick_off_sub_directory_box_folder_download_walk(
                     "folder deletes correctly yet."
                 )
                 break
-        except (ConnectionError, ConnectionResetError, BrokenPipeError):
+        except (ConnectionError, ConnectionResetError, BrokenPipeError, OSError):
             crate_logger.debug(
                 "Attempt {idx}/{limit}".format(idx=i + 1, limit=retry_limit),
                 exc_info=True,
