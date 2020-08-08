@@ -6,6 +6,7 @@ import random
 import time
 import logging
 from functools import partial
+from pathlib import Path
 
 from boxsdk import Client
 from boxsdk.exception import BoxAPIException
@@ -185,11 +186,11 @@ upload_queue = queue.Queue()
 uploads_given_up_on = []
 
 conf_obj = configparser.ConfigParser()
-conf_dir = os.path.abspath(os.path.expanduser("~/.config/diycrate"))
-if not os.path.isdir(conf_dir):
+conf_dir = Path("~/.config/diycrate").expanduser().resolve()
+if not conf_dir.is_dir():
     os.mkdir(conf_dir)
-cloud_credentials_file_path = os.path.join(conf_dir, "box.ini")
-if not os.path.isfile(cloud_credentials_file_path):
-    open(cloud_credentials_file_path, "w").write("")
+cloud_credentials_file_path = conf_dir / "box.ini"
+if not cloud_credentials_file_path.is_file():
+    cloud_credentials_file_path.write_text("")
 conf_obj.read(cloud_credentials_file_path)
-BOX_DIR = os.path.expanduser(conf_obj["box"]["directory"])
+BOX_DIR = Path(conf_obj["box"]["directory"]).expanduser().resolve()

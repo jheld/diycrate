@@ -8,6 +8,7 @@ import shutil
 import threading
 import time
 from functools import partial
+from pathlib import Path
 
 import bottle
 import requests
@@ -44,12 +45,12 @@ bottle_app = bottle.Bottle()
 # keep the lint-ing & introspection from complaining
 # that these attributes don't exist before run-time.
 
-BOX_DIR = os.path.expanduser("~/box")
+BOX_DIR = Path()
 
 download_thread = threading.Thread(target=download_queue_processor)
 upload_thread = threading.Thread(target=upload_queue_processor)
 
-trash_directory = os.path.expanduser("~/.local/share/Trash/files")
+trash_directory = Path("~/.local/share/Trash/files").expanduser()
 
 oauth_meta = {}
 
@@ -107,7 +108,7 @@ def process_item_create_long_poll(client, event):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
     if int(event["source"]["path_collection"]["total_count"]) > 1:
-        path = "{}".format(os.path.sep).join(
+        path = os.path.sep.join(
             [
                 folder["name"]
                 for folder in event["source"]["path_collection"]["entries"][1:]
@@ -115,12 +116,12 @@ def process_item_create_long_poll(client, event):
         )
     else:
         path = ""
-    path = os.path.join(BOX_DIR, path)
-    if not os.path.isdir(path):
+    path = BOX_DIR / path
+    if not path.is_dir():
         os.makedirs(path)
-    file_path = os.path.join(path, event["source"]["name"])
+    file_path = path / event["source"]["name"]
     if obj_type == "folder":
-        if not os.path.isdir(file_path):
+        if not file_path.is_dir():
             os.makedirs(file_path)
         redis_set(
             r_c,
@@ -131,11 +132,11 @@ def process_item_create_long_poll(client, event):
             path,
         )
     elif obj_type == "file":
-        if not os.path.isfile(file_path):
+        if not file_path.is_file():
             download_queue.put(
                 [
                     client.file(file_id=obj_id).get(),
-                    os.path.join(path, event["source"]["name"]),
+                    path / event["source"]["name"],
                     client._oauth,
                 ]
             )
@@ -155,7 +156,7 @@ def process_item_trash_file(event, obj_id):
     if item_info:
         item_info = json.loads(str(item_info, encoding="utf-8", errors="strict"))
     if int(event["source"]["path_collection"]["total_count"]) > 1:
-        path = "{}".format(os.path.sep).join(
+        path = os.path.sep.join(
             [
                 folder["name"]
                 for folder in event["source"]["path_collection"]["entries"][1:]
@@ -163,14 +164,12 @@ def process_item_trash_file(event, obj_id):
         )
     else:
         path = ""
-    path = os.path.join(BOX_DIR, path)
+    path = BOX_DIR / path
     file_path = (
-        os.path.join(path, event["source"]["name"])
-        if not item_info
-        else item_info["file_path"]
+        path / event["source"]["name"] if not item_info else item_info["file_path"]
     )
-    if os.path.exists(file_path):
-        os.unlink(file_path)
+    if file_path.exists():
+        file_path.unlink()
     if r_c.exists(redis_key(obj_id)):
         r_c.delete(redis_key(obj_id))
         r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
@@ -184,7 +183,7 @@ def process_item_trash_folder(event, obj_id):
     if item_info:
         item_info = json.loads(str(item_info, encoding="utf-8", errors="strict"))
     if int(event["source"]["path_collection"]["total_count"]) > 1:
-        path = "{}".format(os.path.sep).join(
+        path = os.path.sep.join(
             [
                 folder["name"]
                 for folder in event["source"]["path_collection"]["entries"][1:]
@@ -192,13 +191,11 @@ def process_item_trash_folder(event, obj_id):
         )
     else:
         path = ""
-    path = os.path.join(BOX_DIR, path)
+    path = BOX_DIR / path
     file_path = (
-        os.path.join(path, event["source"]["name"])
-        if not item_info
-        else item_info["file_path"]
+        path / event["source"]["name"] if not item_info else item_info["file_path"]
     )
-    if os.path.isdir(file_path):
+    if file_path.is_dir():
         # still need to get the parent_id
         for box_id in get_sub_ids(obj_id):
             r_c.delete(redis_key(box_id))
@@ -220,7 +217,7 @@ def process_item_upload_long_poll(client, event):
     obj_type = event["source"]["type"]
     if obj_type == "file":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = "{}".format(os.path.sep).join(
+            path = os.path.sep.join(
                 [
                     folder["name"]
                     for folder in event["source"]["path_collection"]["entries"][1:]
@@ -228,19 +225,19 @@ def process_item_upload_long_poll(client, event):
             )
         else:
             path = ""
-        path = os.path.join(BOX_DIR, path)
-        if not os.path.exists(path):  # just in case this is a file in a new subfolder
+        path = BOX_DIR / path
+        if not path.exists():  # just in case this is a file in a new subfolder
             os.makedirs(path)
         download_queue.put(
             [
                 client.file(file_id=obj_id).get(),
-                os.path.join(path, event["source"]["name"]),
+                path / event["source"]["name"],
                 client._oauth,
             ]
         )
     elif obj_type == "folder":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = "{}".format(os.path.sep).join(
+            path = os.path.sep.join(
                 [
                     folder["name"]
                     for folder in event["source"]["path_collection"]["entries"][1:]
@@ -248,12 +245,12 @@ def process_item_upload_long_poll(client, event):
             )
         else:
             path = ""
-        path = os.path.join(BOX_DIR, path)
-        if not os.path.exists(path):  # just in case this is a file in a new subfolder
+        path = BOX_DIR / path
+        if not path.exists():  # just in case this is a file in a new subfolder
             os.makedirs(path)
-        file_path = os.path.join(path, event["source"]["name"])
+        file_path = path / event["source"]["name"]
         box_message = "new version"
-        if not os.path.exists(file_path):
+        if not file_path.exists():
             os.makedirs(file_path)
             redis_set(
                 r_c,
@@ -274,7 +271,7 @@ def process_item_rename_long_poll(client, event):
     obj_type = event["source"]["type"]
     if obj_type == "file":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = "{}".format(os.path.sep).join(
+            path = os.path.sep.join(
                 [
                     folder["name"]
                     for folder in event["source"]["path_collection"]["entries"][1:]
@@ -282,15 +279,15 @@ def process_item_rename_long_poll(client, event):
             )
         else:
             path = ""
-        path = os.path.join(BOX_DIR, path)
-        file_path = os.path.join(path, event["source"]["name"])
+        path = BOX_DIR / path
+        file_path = path / event["source"]["name"]
         file_obj = client.file(file_id=obj_id).get()
         src_file_path = (
             None
             if not r_c.exists(redis_key(obj_id))
-            else redis_get(r_c, file_obj)["file_path"]
+            else Path(redis_get(r_c, file_obj)["file_path"])
         )
-        if src_file_path and os.path.exists(src_file_path):
+        if src_file_path and src_file_path.exists():
             version_info = redis_get(r_c, obj=file_obj)
             os.rename(src_file_path, file_path)
             version_info["file_path"] = file_path
@@ -301,7 +298,7 @@ def process_item_rename_long_poll(client, event):
             download_queue.put([file_obj, file_path, client._oauth])
     elif obj_type == "folder":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = "{}".format(os.path.sep).join(
+            path = os.path.sep.join(
                 [
                     folder["name"]
                     for folder in event["source"]["path_collection"]["entries"][1:]
@@ -309,15 +306,15 @@ def process_item_rename_long_poll(client, event):
             )
         else:
             path = ""
-        path = os.path.join(BOX_DIR, path)
-        file_path = os.path.join(path, event["source"]["name"])
+        path = BOX_DIR / path
+        file_path = path / event["source"]["name"]
         folder_obj = client.folder(folder_id=obj_id).get()
         src_file_path = (
             None
             if not r_c.exists(redis_key(obj_id))
-            else redis_get(r_c, folder_obj)["file_path"]
+            else Path(redis_get(r_c, folder_obj)["file_path"])
         )
-        if src_file_path and os.path.exists(src_file_path):
+        if src_file_path and src_file_path.exists():
             os.rename(src_file_path, file_path)
             version_info = redis_get(r_c, obj=folder_obj)
             version_info["file_path"] = file_path
@@ -334,11 +331,13 @@ def process_item_move_long_poll(event):
             item_info = json.loads(
                 str(r_c.get(redis_key(obj_id)), encoding="utf-8", errors="strict")
             )
-            src_file_path = json.loads(
-                str(r_c.get(redis_key(obj_id)), encoding="utf-8", errors="strict")
-            )["file_path"]
+            src_file_path = Path(
+                json.loads(
+                    str(r_c.get(redis_key(obj_id)), encoding="utf-8", errors="strict")
+                )["file_path"]
+            )
             if int(event["source"]["path_collection"]["total_count"]) > 1:
-                path = "{}".format(os.path.sep).join(
+                path = os.path.sep.join(
                     [
                         folder["name"]
                         for folder in event["source"]["path_collection"]["entries"][1:]
@@ -346,9 +345,9 @@ def process_item_move_long_poll(event):
                 )
             else:
                 path = ""
-            path = os.path.join(BOX_DIR, path)
-            file_path = os.path.join(path, event["source"]["name"])
-            if os.path.exists(src_file_path):
+            path = BOX_DIR / path
+            file_path = path / event["source"]["name"]
+            if src_file_path.exists():
                 to_set = []
                 if obj_type == "folder":
                     for sub_id in get_sub_ids(obj_id):
@@ -364,7 +363,7 @@ def process_item_move_long_poll(event):
                             tail = os.path.sep.join(
                                 sub_item_info["file_path"].split(os.path.sep)[orig_len:]
                             )
-                            new_sub_path = os.path.join(file_path, tail)
+                            new_sub_path = file_path / tail
                             sub_item_info["file_path"] = new_sub_path
                             to_set.append(
                                 partial(
@@ -539,13 +538,14 @@ class SSLCherryPyServer(ServerAdapter):
 
 def main():
     global oauth
+    global BOX_DIR
 
-    conf_dir = os.path.abspath(os.path.expanduser("~/.config/diycrate"))
-    if not os.path.isdir(conf_dir):
-        os.mkdir(conf_dir)
-    cloud_credentials_file_path = os.path.join(conf_dir, "box.ini")
-    if not os.path.isfile(cloud_credentials_file_path):
-        open(cloud_credentials_file_path, "w").write("")
+    conf_dir = Path("~/.config/diycrate").expanduser().resolve()
+    if not conf_dir.is_dir():
+        conf_dir.mkdir()
+    cloud_credentials_file_path = conf_dir / "box.ini"
+    if not cloud_credentials_file_path.is_file():
+        cloud_credentials_file_path.write_text("")
     conf_obj.read(cloud_credentials_file_path)
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument(
@@ -593,23 +593,20 @@ def main():
         if not args.privkey_pem_path:
             raise ValueError("Need a valid privkey_pem_path")
         conf_obj["ssl"] = {
-            "cacert_pem_path": os.path.abspath(
-                os.path.expanduser(args.cacert_pem_path)
-            ),
-            "privkey_pem_path": os.path.abspath(
-                os.path.expanduser(args.privkey_pem_path)
-            ),
+            "cacert_pem_path": Path(args.cacert_pem_path).expanduser().resolve(),
+            "privkey_pem_path": Path(args.privkey_pem_path).expanduser().resolve(),
         }
     conf_obj["ssl"] = {
-        "cacert_pem_path": os.path.abspath(os.path.expanduser(args.cacert_pem_path))
+        "cacert_pem_path": Path(args.cacert_pem_path).expanduser().resolve()
         if args.cacert_pem_path
         else conf_obj["ssl"]["cacert_pem_path"],
-        "privkey_pem_path": os.path.abspath(os.path.expanduser(args.privkey_pem_path))
+        "privkey_pem_path": Path(args.privkey_pem_path).expanduser().resolve()
         if args.privkey_pem_path
         else conf_obj["ssl"]["privkey_pem_path"],
     }
 
-    conf_obj.write(open(cloud_credentials_file_path, "w"))
+    with open(cloud_credentials_file_path, "w") as fh:
+        conf_obj.write(fh)
     had_box = conf_obj.has_section("box")
     if not had_box:
         conf_obj.add_section("box")
@@ -632,10 +629,11 @@ def main():
         kwargs=dict(server=SSLCherryPyServer, port=web_server_port, host="0.0.0.0"),
     )
     bottle_thread.daemon = True
-    conf_obj.write(open(cloud_credentials_file_path, "w"))
-    BOX_DIR = os.path.expanduser(conf_obj["box"]["directory"])
-    if not os.path.isdir(BOX_DIR):
-        os.mkdir(BOX_DIR)
+    with cloud_credentials_file_path.open("w") as fh:
+        conf_obj.write(fh)
+    BOX_DIR = Path(conf_obj["box"]["directory"]).expanduser().resolve()
+    if not BOX_DIR.is_dir():
+        BOX_DIR.mkdir()
     if not (
         r_c.exists("diy_crate.auth.access_token")
         and r_c.exists("diy_crate.auth.refresh_token")

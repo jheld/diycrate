@@ -4,6 +4,8 @@ import threading
 import logging
 import time
 from functools import partial
+from pathlib import Path
+from typing import Union, List
 
 import pyinotify
 from boxsdk import Client
@@ -21,17 +23,17 @@ setup_logger()
 
 crate_logger = logging.getLogger(__name__)
 
-trash_directory = os.path.expanduser("~/.local/share/Trash/files")
+trash_directory = Path("~/.local/share/Trash/files").expanduser().resolve()
 
 conf_obj = configparser.ConfigParser()
-conf_dir = os.path.abspath(os.path.expanduser("~/.config/diycrate"))
-if not os.path.isdir(conf_dir):
-    os.mkdir(conf_dir)
-cloud_credentials_file_path = os.path.join(conf_dir, "box.ini")
-if not os.path.isfile(cloud_credentials_file_path):
-    open(cloud_credentials_file_path, "w").write("")
+conf_dir = Path("~/.config/diycrate").expanduser().resolve()
+if not conf_dir.is_dir():
+    conf_dir.mkdir()
+cloud_credentials_file_path = conf_dir / "box.ini"
+if not cloud_credentials_file_path.is_file():
+    cloud_credentials_file_path.write_text("")
 conf_obj.read(cloud_credentials_file_path)
-BOX_DIR = os.path.expanduser(conf_obj["box"]["directory"])
+BOX_DIR = Path(conf_obj["box"]["directory"]).expanduser().resolve()
 
 
 class EventHandler(pyinotify.ProcessEvent):
@@ -88,7 +90,7 @@ class EventHandler(pyinotify.ProcessEvent):
                     self.process_event(*operation)
 
     @staticmethod
-    def get_folder(client, folder_id):
+    def get_folder(client, folder_id: str) -> Folder:
         """
 
         :param client:
@@ -120,19 +122,19 @@ class EventHandler(pyinotify.ProcessEvent):
         return folder
 
     @staticmethod
-    def folders_to_traverse(event_path):
+    def folders_to_traverse(event_path: Union[str, Path]) -> List[str]:
         """
 
         :param event_path:
         :return:
         """
+        if isinstance(event_path, str):
+            event_path = Path(event_path)
         folders_to_traverse = [
             folder
-            for folder in event_path.replace(BOX_DIR, "").split(os.path.sep)
+            for folder in event_path.relative_to(BOX_DIR).parts
             if folder and folder != "/"
         ]
-        if len(folders_to_traverse) and folders_to_traverse[0][0] == "/":
-            folders_to_traverse[0] = folders_to_traverse[0][1:]
         return folders_to_traverse
 
     @staticmethod
@@ -212,11 +214,16 @@ class EventHandler(pyinotify.ProcessEvent):
         cur_box_folder = None
         cur_box_folder = get_box_folder(client, cur_box_folder, "0", 5)
         # if we're modifying in root box dir, then we've already found the folder
-        is_base = BOX_DIR in (event.path, event.path[:-1])
+        try:
+            is_base = any(
+                Path(evp).relative_to(BOX_DIR) for evp in [event.path, event.path[:-1]]
+            )
+        except ValueError:
+            is_base = False
         cur_box_folder = self.traverse_path(
             client, event, cur_box_folder, folders_to_traverse
         )
-        last_dir = os.path.split(event.path)[-1]
+        last_dir = Path(event.path).parent.name
         if not is_base:
             AssertionError(
                 cur_box_folder["name"] == last_dir,
@@ -248,7 +255,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 break
         # not a box file/folder (though could have been copied from a local box item)
         if is_file and not did_find_the_file:
-            last_modified_time = os.path.getmtime(event.pathname)
+            last_modified_time = Path(event.pathname).stat().st_mtime
             self.upload_queue.put(
                 [
                     last_modified_time,
@@ -273,11 +280,16 @@ class EventHandler(pyinotify.ProcessEvent):
         retry_limit = 5
         cur_box_folder = get_box_folder(client, cur_box_folder, folder_id, retry_limit)
         # if we're modifying in root box dir, then we've already found the folder
-        is_base = BOX_DIR in (event.path, event.path[:-1])
+        try:
+            is_base = any(
+                Path(evp).relative_to(BOX_DIR) for evp in [event.path, event.path[:-1]]
+            )
+        except ValueError:
+            is_base = False
         cur_box_folder = self.traverse_path(
             client, event, cur_box_folder, folders_to_traverse
         )
-        last_dir = os.path.split(event.path)[-1]
+        last_dir = Path(event.path).parent.name
         if not is_base:
             AssertionError(
                 cur_box_folder["name"] == last_dir,
@@ -301,7 +313,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 is_dir and entry["type"] == "folder" and entry["name"] == event.name
             )
             if did_find_the_file:
-                last_modified_time = os.path.getmtime(event.pathname)
+                last_modified_time = Path(event.pathname).stat().st_mtime
                 if entry["id"] not in self.files_from_box:
                     cur_file = client.file(file_id=entry["id"]).get()
                     can_update = True
@@ -378,7 +390,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 break
         if is_file and not did_find_the_file:
             crate_logger.debug("Uploading contents...: {}".format(event.pathname))
-            last_modified_time = os.path.getmtime(event.pathname)
+            last_modified_time = Path(event.pathname).stat().st_mtime
             self.upload_queue.put(
                 [
                     last_modified_time,
@@ -408,11 +420,16 @@ class EventHandler(pyinotify.ProcessEvent):
                 failed = True
         cur_box_folder = box_folder
         # if we're modifying in root box dir, then we've already found the folder
-        is_base = BOX_DIR in (event.path, event.path[:-1])
+        try:
+            is_base = any(
+                Path(evp).relative_to(BOX_DIR) for evp in [event.path, event.path[:-1]]
+            )
+        except ValueError:
+            is_base = False
         cur_box_folder = self.traverse_path(
             client, event, cur_box_folder, folders_to_traverse
         )
-        last_dir = os.path.split(event.path)[-1]
+        last_dir = Path(event.path).parent.name
         if not is_base:
             assert cur_box_folder["name"] == last_dir
         did_find_the_file = os.path.isdir(
@@ -558,7 +575,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         if did_find_cur_file:
                             self.upload_queue.put(
                                 [
-                                    os.path.getmtime(dest_event.pathname),
+                                    Path(dest_event.pathname).stat().st_mtime,
                                     partial(
                                         cur_entry.update_contents, dest_event.pathname
                                     ),
@@ -602,7 +619,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 if is_file and not did_find_src_file:
                     # src file [should] no longer exist[s].
                     # this file did not originate in box, too.
-                    last_modified_time = os.path.getmtime(dest_event.pathname)
+                    last_modified_time = Path(dest_event.pathname).stat().st_mtime
                     self.upload_queue.put(
                         [
                             last_modified_time,
@@ -626,6 +643,7 @@ class EventHandler(pyinotify.ProcessEvent):
         crate_logger.debug(folders_to_traverse)
         client = Client(self.oauth)
         failed = False
+        box_folder = None
         while not failed:
             try:
                 box_folder = client.folder(folder_id="0").get()
@@ -636,11 +654,16 @@ class EventHandler(pyinotify.ProcessEvent):
                 failed = True
         cur_box_folder = box_folder
         # if we're modifying in root box dir, then we've already found the folder
-        is_base = BOX_DIR in (event.path, event.path[:-1])
+        try:
+            is_base = any(
+                Path(evp).relative_to(BOX_DIR) for evp in [event.path, event.path[:-1]]
+            )
+        except ValueError:
+            is_base = False
         cur_box_folder = self.traverse_path(
             client, event, cur_box_folder, folders_to_traverse
         )
-        last_dir = os.path.split(event.path)[-1]
+        last_dir = Path(event.path).parent.name
         if not is_base:
             AssertionError(
                 cur_box_folder["name"] == last_dir,
@@ -725,16 +748,14 @@ class EventHandler(pyinotify.ProcessEvent):
         :return:
         """
         found_from = False
-        to_trash = (
-            os.path.commonprefix([trash_directory, event.pathname]) == trash_directory
-        )
-        to_box = os.path.commonprefix([BOX_DIR, event.pathname]) == BOX_DIR
+        to_trash = trash_directory == Path(event.pathname).parent
+        to_box = BOX_DIR in Path(event.pathname).parents
         for move_event in self.move_events:
             was_moved_from = "in_moved_from" in move_event.maskname.lower()
             if (
                 move_event.cookie == event.cookie
                 and was_moved_from
-                and os.path.commonprefix([BOX_DIR, move_event.pathname]) == BOX_DIR
+                and BOX_DIR in Path(move_event.pathname).parents
             ):
                 found_from = True
                 # only count deletes that come from within the box path --
@@ -784,7 +805,7 @@ def get_box_folder(client, cur_box_folder, folder_id, retry_limit):
             BoxAPIException,
         ):
             if i + 1 >= retry_limit:
-                crate_logger.warn(
+                crate_logger.warning(
                     "Attempt ({retry_count}) out of ({max_count}); Going to give "
                     "up on the write event".format(
                         retry_count=i, max_count=retry_limit
@@ -792,7 +813,7 @@ def get_box_folder(client, cur_box_folder, folder_id, retry_limit):
                     exc_info=True,
                 )
             else:
-                crate_logger.warn(
+                crate_logger.warning(
                     "Attempt ({retry_count}) "
                     "out of ({max_count})".format(retry_count=i, max_count=retry_limit),
                     exc_info=True,
