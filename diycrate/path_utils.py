@@ -5,10 +5,9 @@ from datetime import timedelta
 from functools import partial
 
 
-import requests
-
 from boxsdk.exception import BoxAPIException
 from boxsdk.client import Client
+from httpx import ConnectError
 
 from .file_operations import wm, mask, BOX_DIR
 from .item_queue_io import download_queue, upload_queue
@@ -47,7 +46,7 @@ def walk_and_notify_and_download_tree(
         try:
             b_folder = client.folder(folder_id=box_folder["id"]).get()
             break
-        except requests.exceptions.ConnectionError:
+        except ConnectError:
             crate_logger.warning("Moving on with sleep", exc_info=True)
             time.sleep(5)
 

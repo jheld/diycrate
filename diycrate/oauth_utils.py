@@ -1,7 +1,6 @@
 import webbrowser
 
-
-import requests
+import httpx
 
 from boxsdk import OAuth2
 from boxsdk.auth import RemoteOAuth2
@@ -60,7 +59,7 @@ def get_access_token(access_token):
     conf_object = conf_obj
     remote_url = conf_object["box"]["token_url"]
     refresh_token = r_c.get("diy_crate.auth.refresh_token")
-    access_token, refresh_token = requests.post(
+    access_token, refresh_token = httpx.post(
         remote_url,
         data={
             "refresh_token": refresh_token.decode("utf-8")
@@ -120,17 +119,17 @@ def store_tokens_callback(access_token, refresh_token):
 
 def oauth_dance(redis_client, conf, bottle_app, file_event_handler, bottle_thread=None):
     bottle_app.oauth = file_event_handler.oauth = setup_remote_oauth(redis_client)
-    import requests
 
-    auth_url, bottle_app.csrf_token = requests.get(
+    resp = httpx.get(
         conf["box"]["authorization_url"],
-        data={
+        params={
             "redirect_url": "https://localhost:{port}/".format(
                 port=conf["box"]["web_server_port"]
             )
         },
         verify=True,
-    ).json()
+    )
+    auth_url, bottle_app.csrf_token = resp.json()
     if bottle_thread and not bottle_thread.is_alive():
         bottle_thread.start()
     webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth

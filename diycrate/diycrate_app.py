@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Union, Optional
 
 import bottle
-import requests
+import httpx
 import pyinotify
 from bottle import ServerAdapter
 from boxsdk import Client, exception, OAuth2
@@ -433,7 +433,7 @@ def oauth_handler():
     :return:
     """
     assert bottle_app.csrf_token == bottle.request.GET["state"]
-    access_token, refresh_token = requests.post(
+    access_token, refresh_token = httpx.post(
         conf_obj["box"]["authenticate_url"],
         data={"code": bottle.request.GET["code"]},
         verify=True,

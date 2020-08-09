@@ -12,8 +12,7 @@ from typing import Callable, Any, List
 from boxsdk import Client
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.file import File
-from requests import ConnectionError
-from urllib3.exceptions import ProtocolError
+from httpx import ConnectError, ProtocolError
 
 from .file_operations import wm, mask
 from .cache_utils import redis_key, redis_set, redis_get, r_c
@@ -76,7 +75,7 @@ def perform_upload(
                     exc_info=True,
                 )
                 break
-        except (ConnectionError, BrokenPipeError, ProtocolError, ConnectionResetError):
+        except (ConnectError, BrokenPipeError, ProtocolError, ConnectionResetError):
             sleep_time = random.randint(0, 8)
             time.sleep(sleep_time)
             crate_logger.debug("{the_args}".format(the_args=args), exc_info=True)

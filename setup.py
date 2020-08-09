@@ -19,7 +19,7 @@ install_requires = [
     "boxsdk>=2.0,<3.0",
     "pyinotify==0.9.6",
     "redis~=3.3.0",
-    "requests>=2.20.0,<3.0",
+    "httpx==0.14.1",
     "pyopenssl>=16.0.0",
     "cherrypy>=13.0.0",
 ]
