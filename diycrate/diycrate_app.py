@@ -54,11 +54,7 @@ upload_thread = threading.Thread(target=upload_queue_processor)
 
 trash_directory = Path("~/.local/share/Trash/files").expanduser()
 
-oauth_meta = {}
-
-handler = EventHandler(
-    upload_queue=upload_queue, bottle_app=bottle_app, oauth_meta_info=oauth_meta
-)
+handler = EventHandler(upload_queue=upload_queue, bottle_app=bottle_app)
 
 notifier = pyinotify.ThreadedNotifier(wm, handler, read_freq=10)
 notifier.coalesce_events()
@@ -497,14 +493,7 @@ def start_cloud_threads(client_oauth):
     if not long_poll_thread.is_alive():  # start before doing anything else
         long_poll_thread.start()
     if not walk_thread.is_alive():
-        walk_thread._args = (
-            BOX_DIR,
-            box_folder,
-            client_oauth,
-            oauth_meta,
-            bottle_app,
-            handler,
-        )
+        walk_thread._args = (BOX_DIR, box_folder, client_oauth, bottle_app, handler)
         walk_thread.start()
 
 

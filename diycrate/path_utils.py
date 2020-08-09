@@ -22,20 +22,13 @@ crate_logger = logging.getLogger(__name__)
 
 
 def walk_and_notify_and_download_tree(
-    path,
-    box_folder,
-    oauth_obj,
-    oauth_meta_info,
-    p_id=None,
-    bottle_app=None,
-    file_event_handler=None,
+    path, box_folder, oauth_obj, p_id=None, bottle_app=None, file_event_handler=None
 ):
     """
     Walk the path recursively and add watcher and create the path.
     :param path:
     :param box_folder:
     :param oauth_obj:
-    :param oauth_meta_info:
     :param p_id:
     :param bottle_app:
     :param file_event_handler:
@@ -87,7 +80,6 @@ def walk_and_notify_and_download_tree(
                 file_event_handler,
                 fresh_download,
                 local_path,
-                oauth_meta_info,
                 oauth_obj,
                 retry_limit,
             )
@@ -156,7 +148,6 @@ def kick_off_sub_directory_box_folder_download_walk(
     file_event_handler,
     fresh_download,
     local_path,
-    oauth_meta_info,
     oauth_obj,
     retry_limit,
 ):
@@ -197,7 +188,6 @@ def kick_off_sub_directory_box_folder_download_walk(
                 local_path,
                 box_folder_obj,
                 oauth_obj,
-                oauth_meta_info,
                 p_id=box_folder["id"],
                 bottle_app=bottle_app,
                 file_event_handler=file_event_handler,
@@ -226,45 +216,43 @@ def local_files_walk_pre_process(
             )
 
 
-def re_walk(
-    path,
-    box_folder,
-    oauth_obj,
-    oauth_meta_info,
-    bottle_app=None,
-    file_event_handler=None,
-):
+def re_walk(path, box_folder, oauth_obj, bottle_app=None, file_event_handler=None):
     """
 
     :param path:
     :param box_folder:
     :param oauth_obj:
-    :param oauth_meta_info:
     :param bottle_app:
     :param file_event_handler:
     :return:
     """
     while True:
-        start = time.time()
-        crate_logger.info("Starting walk.")
-        walk_and_notify_and_download_tree(
-            path,
-            box_folder,
-            oauth_obj,
-            oauth_meta_info,
-            bottle_app=bottle_app,
-            file_event_handler=file_event_handler,
-        )
-        end = time.time()
-        duration = int(end - start)
-        if duration >= 60:
-            duration = round(timedelta(seconds=duration) / timedelta(minutes=1), 2)
-            unit = "m"
-        else:
-            unit = "s"
-        crate_logger.info(
-            "Finished walking! Took {duration}{unit}".format(
-                duration=duration, unit=unit
+        try:
+            start = time.time()
+            crate_logger.info("Starting walk.")
+            walk_and_notify_and_download_tree(
+                path,
+                box_folder,
+                oauth_obj,
+                bottle_app=bottle_app,
+                file_event_handler=file_event_handler,
             )
-        )
-        time.sleep(3600)  # once an hour we walk the tree
+            end = time.time()
+            duration = int(end - start)
+            if duration >= 60:
+                duration = round(timedelta(seconds=duration) / timedelta(minutes=1), 2)
+                unit = "m"
+            else:
+                unit = "s"
+            crate_logger.info(
+                "Finished walking! Took {duration}{unit}".format(
+                    duration=duration, unit=unit
+                )
+            )
+            time.sleep(3600)  # once an hour we walk the tree
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            crate_logger.warning(
+                "re_walk encountered error (will reloop).", exc_info=True
+            )

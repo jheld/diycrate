@@ -46,7 +46,7 @@ class EventHandler(pyinotify.ProcessEvent):
         Extends the super to add cloud storage state.
         :return:
         """
-        our_keys = ["oauth", "upload_queue", "bottle_app", "oauth_meta_info"]
+        our_keys = ["oauth", "upload_queue", "bottle_app"]
         our_kargs = {k: kargs.get(k) for k in our_keys}
         for key in our_keys:
             kargs.pop(key, None)
@@ -61,7 +61,6 @@ class EventHandler(pyinotify.ProcessEvent):
         self.oauth = kargs.get("oauth")
         self.operations_thread = threading.Thread(target=self.operation_coalesce)
         self.bottle_app = kargs.get("bottle_app")
-        self.oauth_meta_info = kargs.get("oauth_meta_info")
         self.operations_thread.daemon = True
         self.operations_thread.start()
 
