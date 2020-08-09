@@ -8,6 +8,8 @@ include LICENSE
 
 include *.py
 
+include mypy.ini
+
 exclude Makefile .flake8 .pre-commit-config.yaml
 
 # Include the project's internal logic

@@ -9,12 +9,14 @@ import threading
 import time
 from functools import partial
 from pathlib import Path
+from typing import Union, Optional
 
 import bottle
 import requests
 import pyinotify
 from bottle import ServerAdapter
-from boxsdk import Client, exception
+from boxsdk import Client, exception, OAuth2
+from boxsdk.auth import RemoteOAuth2
 from cheroot import wsgi as wsgiserver
 from cheroot.ssl.builtin import BuiltinSSLAdapter
 
@@ -415,7 +417,7 @@ walk_thread.daemon = True
 #     r_c.delete('diy_crate.auth.refresh_token', 'diy_crate.auth.access_token')
 #     return 'OK'
 
-oauth = None
+oauth: Optional[Union[RemoteOAuth2, OAuth2]] = None
 conf_obj = configparser.ConfigParser()
 
 

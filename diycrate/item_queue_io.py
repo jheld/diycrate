@@ -7,6 +7,7 @@ import time
 import logging
 from functools import partial
 from pathlib import Path
+from typing import Callable, Any, List
 
 from boxsdk import Client
 from boxsdk.exception import BoxAPIException
@@ -183,7 +184,7 @@ def perform_download(item, path, retry_limit=15):
 
 download_queue = queue.Queue()
 upload_queue = queue.Queue()
-uploads_given_up_on = []
+uploads_given_up_on: List[Callable[..., Any]] = []
 
 conf_obj = configparser.ConfigParser()
 conf_dir = Path("~/.config/diycrate").expanduser().resolve()
