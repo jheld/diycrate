@@ -1,13 +1,8 @@
-#!/usr/bin/env python3
 import argparse
 import configparser
-import json
 import logging
-import os
-import shutil
 import threading
 import time
-from functools import partial
 from pathlib import Path
 from typing import Union, Optional
 
@@ -20,15 +15,14 @@ from boxsdk.auth import RemoteOAuth2
 from cheroot import wsgi as wsgiserver
 from cheroot.ssl.builtin import BuiltinSSLAdapter
 
-from diycrate.cache_utils import redis_key, redis_get, r_c, redis_set
+from diycrate.cache_utils import r_c
 from diycrate.file_operations import EventHandler, wm, in_moved_to, in_moved_from, mask
-from diycrate.gui import notify_user_with_gui
 from diycrate.item_queue_io import (
     upload_queue_processor,
     download_queue_processor,
-    download_queue,
     upload_queue,
 )
+from diycrate.long_poll_processing import long_poll_event_listener
 from diycrate.oauth_utils import store_tokens_callback, setup_remote_oauth, oauth_dance
 from diycrate.path_utils import re_walk
 
@@ -58,345 +52,6 @@ handler = EventHandler(upload_queue=upload_queue, bottle_app=bottle_app)
 
 notifier = pyinotify.ThreadedNotifier(wm, handler, read_freq=10)
 notifier.coalesce_events()
-
-
-def long_poll_event_listener():
-    """
-    Receive and process remote cloud item events in real-time
-    :return:
-    """
-    while True:
-        try:
-            client = Client(oauth=handler.oauth)
-            long_poll_streamer = client.events()
-            stream_position = long_poll_streamer.get_latest_stream_position()
-            event_stream = long_poll_streamer.generate_events_with_long_polling(
-                stream_position
-            )
-            for event in event_stream:
-                event_message = "{} happened! {} {}".format(
-                    str(event), event.event_type, event.created_at
-                )
-                crate_logger.debug(event_message)
-                if event.get("message", "").lower() == "reconnect":
-                    break
-                process_long_poll_event(client, event)
-        except (exception.BoxAPIException, AttributeError):
-            crate_logger.warning("Box or AttributeError occurred.", exc_info=True)
-        except Exception:
-            crate_logger.debug("General error occurred.", exc_info=True)
-
-
-def process_long_poll_event(client, event):
-    if event["event_type"] == "ITEM_CREATE":
-        process_item_create_long_poll(client, event)
-    if event["event_type"] == "ITEM_MOVE":
-        process_item_move_long_poll(event)
-    if event["event_type"] == "ITEM_RENAME":
-        process_item_rename_long_poll(client, event)
-    elif event["event_type"] == "ITEM_UPLOAD":
-        process_item_upload_long_poll(client, event)
-    elif event["event_type"] == "ITEM_TRASH":
-        process_item_trash_long_poll(event)
-    elif event["event_type"] == "ITEM_DOWNLOAD":
-        pass
-
-
-def process_item_create_long_poll(client, event):
-    obj_id = event["source"]["id"]
-    obj_type = event["source"]["type"]
-    if int(event["source"]["path_collection"]["total_count"]) > 1:
-        path = os.path.sep.join(
-            [
-                folder["name"]
-                for folder in event["source"]["path_collection"]["entries"][1:]
-            ]
-        )
-    else:
-        path = ""
-    path = BOX_DIR / path
-    if not path.is_dir():
-        os.makedirs(path)
-    file_path = path / event["source"]["name"]
-    if obj_type == "folder":
-        if not file_path.is_dir():
-            os.makedirs(file_path)
-        redis_set(
-            r_c,
-            client.folder(folder_id=obj_id),
-            os.path.getmtime(file_path),
-            BOX_DIR,
-            True,
-            path,
-        )
-    elif obj_type == "file":
-        if not file_path.is_file():
-            download_queue.put(
-                [
-                    client.file(file_id=obj_id).get(),
-                    path / event["source"]["name"],
-                    client._oauth,
-                ]
-            )
-
-
-def process_item_trash_long_poll(event):
-    obj_id = event["source"]["id"]
-    obj_type = event["source"]["type"]
-    if obj_type == "file":
-        process_item_trash_file(event, obj_id)
-    elif obj_type == "folder":
-        process_item_trash_folder(event, obj_id)
-
-
-def process_item_trash_file(event, obj_id):
-    item_info = r_c.get(redis_key(obj_id))
-    if item_info:
-        item_info = json.loads(str(item_info, encoding="utf-8", errors="strict"))
-    if int(event["source"]["path_collection"]["total_count"]) > 1:
-        path = os.path.sep.join(
-            [
-                folder["name"]
-                for folder in event["source"]["path_collection"]["entries"][1:]
-            ]
-        )
-    else:
-        path = ""
-    path = BOX_DIR / path
-    file_path = (
-        path / event["source"]["name"] if not item_info else item_info["file_path"]
-    )
-    if file_path.exists():
-        file_path.unlink()
-    if r_c.exists(redis_key(obj_id)):
-        r_c.delete(redis_key(obj_id))
-        r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-    notify_user_with_gui(
-        "Box message: Deleted {}".format(file_path), crate_logger, expire_time=10000
-    )
-
-
-def process_item_trash_folder(event, obj_id):
-    item_info = r_c.get(redis_key(obj_id))
-    if item_info:
-        item_info = json.loads(str(item_info, encoding="utf-8", errors="strict"))
-    if int(event["source"]["path_collection"]["total_count"]) > 1:
-        path = os.path.sep.join(
-            [
-                folder["name"]
-                for folder in event["source"]["path_collection"]["entries"][1:]
-            ]
-        )
-    else:
-        path = ""
-    path = BOX_DIR / path
-    file_path = (
-        path / event["source"]["name"] if not item_info else item_info["file_path"]
-    )
-    if file_path.is_dir():
-        # still need to get the parent_id
-        for box_id in get_sub_ids(obj_id):
-            r_c.delete(redis_key(box_id))
-        r_c.delete(redis_key(obj_id))
-        shutil.rmtree(file_path)
-        parent_id = r_c.get(redis_key(obj_id)).get("parent_id")
-        if parent_id:
-            parent_folder = r_c.get(redis_key(parent_id))
-            sub_ids = parent_folder.get("sub_ids", [])
-            if sub_ids:
-                sub_ids.remove(obj_id)
-                r_c.set(redis_key(parent_id), json.dumps(parent_folder))
-            r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-        notify_user_with_gui("Box message: Deleted {}".format(file_path), crate_logger)
-
-
-def process_item_upload_long_poll(client, event):
-    obj_id = event["source"]["id"]
-    obj_type = event["source"]["type"]
-    if obj_type == "file":
-        if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = os.path.sep.join(
-                [
-                    folder["name"]
-                    for folder in event["source"]["path_collection"]["entries"][1:]
-                ]
-            )
-        else:
-            path = ""
-        path = BOX_DIR / path
-        if not path.exists():  # just in case this is a file in a new subfolder
-            os.makedirs(path)
-        download_queue.put(
-            [
-                client.file(file_id=obj_id).get(),
-                path / event["source"]["name"],
-                client._oauth,
-            ]
-        )
-    elif obj_type == "folder":
-        if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = os.path.sep.join(
-                [
-                    folder["name"]
-                    for folder in event["source"]["path_collection"]["entries"][1:]
-                ]
-            )
-        else:
-            path = ""
-        path = BOX_DIR / path
-        if not path.exists():  # just in case this is a file in a new subfolder
-            os.makedirs(path)
-        file_path = path / event["source"]["name"]
-        box_message = "new version"
-        if not file_path.exists():
-            os.makedirs(file_path)
-            redis_set(
-                r_c,
-                client.folder(folder_id=obj_id),
-                os.path.getmtime(file_path),
-                BOX_DIR,
-                True,
-                path,
-            )
-            box_message = "new folder"
-        notify_user_with_gui(
-            "Box message: {} {}".format(box_message, file_path), crate_logger
-        )
-
-
-def process_item_rename_long_poll(client, event):
-    obj_id = event["source"]["id"]
-    obj_type = event["source"]["type"]
-    if obj_type == "file":
-        if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = os.path.sep.join(
-                [
-                    folder["name"]
-                    for folder in event["source"]["path_collection"]["entries"][1:]
-                ]
-            )
-        else:
-            path = ""
-        path = BOX_DIR / path
-        file_path = path / event["source"]["name"]
-        file_obj = client.file(file_id=obj_id).get()
-        src_file_path = (
-            None
-            if not r_c.exists(redis_key(obj_id))
-            else Path(redis_get(r_c, file_obj)["file_path"])
-        )
-        if src_file_path and src_file_path.exists():
-            version_info = redis_get(r_c, obj=file_obj)
-            os.rename(src_file_path, file_path)
-            version_info["file_path"] = file_path
-            version_info["etag"] = file_obj["etag"]
-            r_c.set(redis_key(obj_id), json.dumps(version_info))
-            r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-        else:
-            download_queue.put([file_obj, file_path, client._oauth])
-    elif obj_type == "folder":
-        if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = os.path.sep.join(
-                [
-                    folder["name"]
-                    for folder in event["source"]["path_collection"]["entries"][1:]
-                ]
-            )
-        else:
-            path = ""
-        path = BOX_DIR / path
-        file_path = path / event["source"]["name"]
-        folder_obj = client.folder(folder_id=obj_id).get()
-        src_file_path = (
-            None
-            if not r_c.exists(redis_key(obj_id))
-            else Path(redis_get(r_c, folder_obj)["file_path"])
-        )
-        if src_file_path and src_file_path.exists():
-            os.rename(src_file_path, file_path)
-            version_info = redis_get(r_c, obj=folder_obj)
-            version_info["file_path"] = file_path
-            version_info["etag"] = folder_obj["etag"]
-            r_c.set(redis_key(obj_id), json.dumps(version_info))
-            r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-
-
-def process_item_move_long_poll(event):
-    obj_id = event["source"]["id"]
-    obj_type = event["source"]["type"]
-    if obj_type in ("file", "folder"):
-        if r_c.exists(redis_key(obj_id)):
-            item_info = json.loads(
-                str(r_c.get(redis_key(obj_id)), encoding="utf-8", errors="strict")
-            )
-            src_file_path = Path(
-                json.loads(
-                    str(r_c.get(redis_key(obj_id)), encoding="utf-8", errors="strict")
-                )["file_path"]
-            )
-            if int(event["source"]["path_collection"]["total_count"]) > 1:
-                path = os.path.sep.join(
-                    [
-                        folder["name"]
-                        for folder in event["source"]["path_collection"]["entries"][1:]
-                    ]
-                )
-            else:
-                path = ""
-            path = BOX_DIR / path
-            file_path = path / event["source"]["name"]
-            if src_file_path.exists():
-                to_set = []
-                if obj_type == "folder":
-                    for sub_id in get_sub_ids(obj_id):
-                        if r_c.exists(redis_key(sub_id)):
-                            sub_item_info = json.loads(
-                                str(
-                                    r_c.get(redis_key(sub_id)),
-                                    encoding="utf-8",
-                                    errors="strict",
-                                )
-                            )
-                            orig_len = len(src_file_path.split(os.path.sep))
-                            tail = os.path.sep.join(
-                                sub_item_info["file_path"].split(os.path.sep)[orig_len:]
-                            )
-                            new_sub_path = file_path / tail
-                            sub_item_info["file_path"] = new_sub_path
-                            to_set.append(
-                                partial(
-                                    r_c.set,
-                                    redis_key(sub_id),
-                                    json.dumps(sub_item_info),
-                                )
-                            )
-                shutil.move(src_file_path, file_path)
-                for item in to_set:
-                    item()
-                item_info["file_path"] = file_path
-                item_info["etag"] = event["source"]["etag"]
-                r_c.set(redis_key(obj_id), json.dumps(item_info))
-
-
-def get_sub_ids(box_id):
-    """
-    Retrieve the box item ids that are stored in this sub path
-    :param box_id:
-    :return:
-    """
-    ids = []
-    item_info = json.loads(
-        str(r_c.get(redis_key(box_id)), encoding="utf-8", errors="strict")
-    )
-    for sub_id in item_info["sub_ids"]:
-        sub_item_info = json.loads(
-            str(r_c.get(redis_key(sub_id)), encoding="utf-8", errors="strict")
-        )
-        if os.path.isdir(sub_item_info["file_path"]):
-            ids.extend(get_sub_ids(sub_id))
-        ids.append(sub_id)
-    return ids
-
 
 long_poll_thread = threading.Thread(target=long_poll_event_listener)
 long_poll_thread.daemon = True
@@ -491,6 +146,7 @@ def start_cloud_threads(client_oauth):
     # local trash can
     wm.add_watch(trash_directory, mask=in_moved_to | in_moved_from)
     if not long_poll_thread.is_alive():  # start before doing anything else
+        long_poll_thread._args = (handler,)
         long_poll_thread.start()
     if not walk_thread.is_alive():
         walk_thread._args = (BOX_DIR, box_folder, client_oauth, bottle_app, handler)
