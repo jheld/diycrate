@@ -7,11 +7,12 @@ import time
 import logging
 from functools import partial
 from pathlib import Path
-from typing import Callable, Any, List
+from typing import Callable, Any, List, NamedTuple, Union
 
-from boxsdk import Client
+from boxsdk import Client, OAuth2
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.file import File
+from boxsdk.object.folder import Folder
 from httpx import ConnectError, ProtocolError
 
 from .file_operations import wm, mask
@@ -181,8 +182,22 @@ def perform_download(item, path, retry_limit=15):
         break
 
 
-download_queue = queue.Queue()
-upload_queue = queue.Queue()
+class DownloadQueueItem(NamedTuple):
+    item: Union[File, Folder]
+    path: Union[Path, str]
+    oauth: OAuth2
+
+
+class ListBasedUploadQueueItem(NamedTuple):
+    last_modified_time: float
+    callable_up: Callable[..., Any]
+    oauth: OAuth2
+
+
+UploadQueueItem = Union[Callable[..., Any], List[ListBasedUploadQueueItem]]
+
+download_queue: "queue.Queue[DownloadQueueItem]" = queue.Queue()
+upload_queue: "queue.Queue[UploadQueueItem]" = queue.Queue()
 uploads_given_up_on: List[Callable[..., Any]] = []
 
 conf_obj = configparser.ConfigParser()
