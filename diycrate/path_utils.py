@@ -51,7 +51,13 @@ def walk_and_notify_and_download_tree(
             time.sleep(5)
 
     limit = 100
-    local_files_walk_pre_process(b_folder, limit, local_files, oauth_obj, path)
+    for _ in range(5):
+        try:
+            local_files_walk_pre_process(b_folder, limit, local_files, oauth_obj, path)
+            break
+        except Exception:
+            pass
+
     ids_in_folder = []
     offset = 0
     folder_items = b_folder.get_items(limit=limit, offset=offset)
@@ -197,7 +203,12 @@ def kick_off_sub_directory_box_folder_download_walk(
 def local_files_walk_pre_process(
     b_folder, limit, local_files, oauth_obj, path, offset=0
 ):
-    for box_item in b_folder.get_items(limit=limit, offset=offset):
+    folder_items = b_folder.get_items(limit=limit, offset=offset)
+    safe_iter = SafeIter(folder_items)
+
+    for box_item in safe_iter:
+        if box_item is None:
+            continue
         if box_item["name"] in local_files:
             local_files.remove(box_item["name"])
     for (
