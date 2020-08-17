@@ -37,10 +37,8 @@ def walk_and_notify_and_download_tree(
         wm.add_watch(path, mask, rec=True, auto_add=True)
         local_files = os.listdir(path)
     else:
-        raise ValueError(
-            "path: {path} is not a path; " "cannot walk it.".format(path=path)
-        )
-    crate_logger.debug("Walking path: {path}".format(path=path))
+        raise ValueError(f"path: {path} is not a path; cannot walk it.")
+    crate_logger.debug(f"Walking path: {path}")
     client = oauth_setup_within_directory_walk(bottle_app)
     while True:
         try:
@@ -104,20 +102,16 @@ def walk_and_notify_and_download_tree(
 
 def oauth_setup_within_directory_walk(bottle_app):
     client = Client(bottle_app.oauth)
-    client.auth._access_token = r_c.get("diy_crate.auth.access_token")
-    client.auth._refresh_token = r_c.get("diy_crate.auth.refresh_token")
-    if client.auth._access_token:
-        client.auth._access_token = (
-            client.auth._access_token.decode(encoding="utf-8")
-            if isinstance(client.auth._access_token, bytes)
-            else client.auth._access_token
-        )
-    if client.auth._refresh_token:
-        client.auth._refresh_token = (
-            client.auth._refresh_token.decode(encoding="utf-8")
-            if isinstance(client.auth._refresh_token, bytes)
-            else client.auth._refresh_token
-        )
+    access_token = r_c.get("diy_crate.auth.access_token")
+    if isinstance(access_token, bytes):
+        access_token = access_token.decode(encoding="utf-8")
+    refresh_token = r_c.get("diy_crate.auth.refresh_token")
+    if isinstance(refresh_token, bytes):
+        refresh_token = refresh_token.decode(encoding="utf-8")
+    if access_token:
+        client.auth._access_token = access_token
+    if refresh_token:
+        client.auth._refresh_token = refresh_token
     return client
 
 
@@ -129,18 +123,10 @@ def kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path):
         crate_logger.debug("Error occurred", exc_info=True)
         if e.status == 404:
             crate_logger.debug(
-                "Box says: {obj_id}, {obj_name}, "
-                "is a 404 status.".format(
-                    obj_id=box_item["id"], obj_name=box_item["name"]
-                )
+                f"Box says: {box_item['id']}, {box_item['name']}, is a 404 status."
             )
             if r_c.exists(redis_key(box_item["id"])):
-                crate_logger.debug(
-                    "Deleting {obj_id}, "
-                    "{obj_name}".format(
-                        obj_id=box_item["id"], obj_name=box_item["name"]
-                    )
-                )
+                crate_logger.debug(f"Deleting {box_item['id']}, {box_item['name']}")
                 r_c.delete(redis_key(box_item["id"]))
         raise e
 
@@ -171,10 +157,7 @@ def kick_off_sub_directory_box_folder_download_walk(
             crate_logger.debug("Box error occurred.")
             if e.status == 404:
                 crate_logger.debug(
-                    "Box says: {obj_id}, "
-                    "{obj_name}, is a 404 status.".format(
-                        obj_id=box_item["id"], obj_name=box_item["name"]
-                    )
+                    f"Box says: {box_item['id']}, {box_item['name']}, is a 404 status."
                 )
                 crate_logger.debug(
                     "But, this is a folder, we do not handle recursive "
@@ -182,10 +165,7 @@ def kick_off_sub_directory_box_folder_download_walk(
                 )
                 break
         except (ConnectionError, ConnectionResetError, BrokenPipeError, OSError):
-            crate_logger.debug(
-                "Attempt {idx}/{limit}".format(idx=i + 1, limit=retry_limit),
-                exc_info=True,
-            )
+            crate_logger.debug(f"Attempt {i + 1}/{retry_limit}", exc_info=True)
         else:
             if i:
                 crate_logger.debug("Succeeded on retry.")
@@ -254,11 +234,7 @@ def re_walk(path, box_folder, oauth_obj, bottle_app=None, file_event_handler=Non
                 unit = "m"
             else:
                 unit = "s"
-            crate_logger.info(
-                "Finished walking! Took {duration}{unit}".format(
-                    duration=duration, unit=unit
-                )
-            )
+            crate_logger.info(f"Finished walking! Took {duration}{unit}")
             time.sleep(3600)  # once an hour we walk the tree
         except KeyboardInterrupt:
             raise

@@ -26,18 +26,10 @@ def setup_oauth(cache_client, conf_object, callback):
     """
     access_token = cache_client.get("diy_crate.auth.access_token")
     refresh_token = cache_client.get("diy_crate.auth.refresh_token")
-    if access_token:
-        access_token = (
-            access_token.decode(encoding="utf-8")
-            if isinstance(access_token, bytes)
-            else access_token
-        )
-    if refresh_token:
-        refresh_token = (
-            refresh_token.decode(encoding="utf-8")
-            if isinstance(refresh_token, bytes)
-            else refresh_token
-        )
+    if isinstance(access_token, bytes):
+        access_token = access_token.decode(encoding="utf-8")
+    if isinstance(refresh_token, bytes):
+        refresh_token = refresh_token.decode(encoding="utf-8")
     oauth = OAuth2(
         client_id=conf_object["oauth2"]["client_id"],
         client_secret=conf_object["oauth2"]["client_secret"],
@@ -56,27 +48,25 @@ def get_access_token(access_token):
     """
     from .file_operations import conf_obj
 
+    if isinstance(access_token, bytes):
+        access_token = access_token.decode(encoding="utf-8")
+
     conf_object = conf_obj
     remote_url = conf_object["box"]["token_url"]
     refresh_token = r_c.get("diy_crate.auth.refresh_token")
+
+    if isinstance(refresh_token, bytes):
+        refresh_token = refresh_token.decode(encoding="utf-8")
+
     access_token, refresh_token = httpx.post(
         remote_url,
-        data={
-            "refresh_token": refresh_token.decode("utf-8")
-            if refresh_token and isinstance(refresh_token, bytes)
-            else refresh_token,
-            "access_token": access_token.decode("utf-8")
-            if access_token and isinstance(access_token, bytes)
-            else access_token,
-        },
+        data={"refresh_token": refresh_token, "access_token": access_token},
         verify=True,
     ).json()
     r_c.set("diy_crate.auth.access_token", access_token)
     r_c.set("diy_crate.auth.refresh_token", refresh_token)
     crate_logger.debug(
-        "new access_token: {access_token}, refresh_token: {refresh_token}".format(
-            access_token=access_token, refresh_token=refresh_token
-        )
+        f"new access_token: {access_token}, refresh_token: {refresh_token}"
     )
     return access_token
 
@@ -89,16 +79,18 @@ def setup_remote_oauth(cache_client, retrieve_access_token=get_access_token):
     :return:
     """
     access_token = cache_client.get("diy_crate.auth.access_token")
+
+    if isinstance(access_token, bytes):
+        access_token = access_token.decode(encoding="utf-8")
     refresh_token = cache_client.get("diy_crate.auth.refresh_token")
+
+    if isinstance(refresh_token, bytes):
+        refresh_token = refresh_token.decode(encoding="utf-8")
     oauth = RemoteOAuth2(
         client_id="",
         client_secret="",
-        access_token=access_token.decode("utf-8")
-        if access_token and isinstance(access_token, bytes)
-        else access_token,
-        refresh_token=refresh_token.decode("utf-8")
-        if refresh_token and isinstance(refresh_token, bytes)
-        else refresh_token,
+        access_token=access_token,
+        refresh_token=refresh_token,
         retrieve_access_token=retrieve_access_token,
     )
     return oauth
@@ -113,6 +105,11 @@ def store_tokens_callback(access_token, refresh_token):
     """
     assert access_token
     assert refresh_token
+    if isinstance(access_token, bytes):
+        access_token = access_token.decode(encoding="utf-8")
+
+    if isinstance(refresh_token, bytes):
+        refresh_token = refresh_token.decode(encoding="utf-8")
     r_c.set("diy_crate.auth.access_token", access_token)
     r_c.set("diy_crate.auth.refresh_token", refresh_token)
 
@@ -122,11 +119,7 @@ def oauth_dance(redis_client, conf, bottle_app, file_event_handler, bottle_threa
 
     resp = httpx.get(
         conf["box"]["authorization_url"],
-        params={
-            "redirect_url": "https://localhost:{port}/".format(
-                port=conf["box"]["web_server_port"]
-            )
-        },
+        params={"redirect_url": f"https://localhost:{conf['box']['web_server_port']}/"},
         verify=True,
     )
     auth_url, bottle_app.csrf_token = resp.json()

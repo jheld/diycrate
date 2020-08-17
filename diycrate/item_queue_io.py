@@ -67,22 +67,22 @@ def perform_upload(
                     redis_set(r_c, file_obj, last_modified_time, box_dir_path=BOX_DIR)
             break
         except BoxAPIException as e:
-            crate_logger.debug("{the_args}".format(the_args=args), exc_info=True)
+            crate_logger.debug(f"{args}", exc_info=True)
             if e.status == 409:
                 crate_logger.warning(
-                    "Apparently Box says this item already exists..."
-                    "and we were trying to create it. "
-                    "Need to handle this better. message: {}".format(e.message),
+                    f"Apparently Box says this item already exists..."
+                    f"and we were trying to create it. "
+                    f"Need to handle this better. message: {e.message}",
                     exc_info=True,
                 )
                 break
         except (ConnectError, BrokenPipeError, ProtocolError, ConnectionResetError):
             sleep_time = random.randint(0, 8)
             time.sleep(sleep_time)
-            crate_logger.debug("{the_args}".format(the_args=args), exc_info=True)
+            crate_logger.debug(f"{args}", exc_info=True)
             if x >= num_retries - 1:
                 crate_logger.warning(
-                    "Upload giving up on: {}".format(callable_up), exc_info=True
+                    f"Upload giving up on: {callable_up}", exc_info=True
                 )
                 # no immediate plans to do anything with this info, yet.
                 uploads_given_up_on.append(callable_up)
@@ -129,31 +129,23 @@ def perform_download(item, path, retry_limit=15):
         try:
             with open(path, "wb") as item_handler:
                 crate_logger.debug(
-                    "About to download: {obj_name}, "
-                    "{obj_id}".format(obj_name=item["name"], obj_id=item["id"])
+                    f"About to download: {item['name']}, " f"{item['id']}"
                 )
 
-                dlwd_key = "diy_crate.breadcrumb.create_from_box.{path}".format(
-                    path=path
-                )
+                dlwd_key = f"diy_crate.breadcrumb.create_from_box.{path}"
                 r_c.setex(dlwd_key, 300, 1)
                 item.download_to(item_handler)
                 # if item_wd is not None:
                 #     wm.update_watch(item_wd, mask=mask | in_create)
 
-            crate_logger.debug(
-                "Did download: {obj_name}, "
-                "{obj_id}".format(obj_name=item["name"], obj_id=item["id"])
-            )
+            crate_logger.debug(f"Did download: {item['name']}, " f"{item['id']}")
 
         except BoxAPIException as e:
             crate_logger.info("Error occurred", exc_info=True)
             if e.status == 404:
                 crate_logger.debug(
-                    "Apparently item: {obj_id}, {path} has been deleted, "
-                    "right before we tried to download".format(
-                        obj_id=item["id"], path=path
-                    ),
+                    f"Apparently item: {item['id']}, {path} has been deleted, "
+                    f"right before we tried to download",
                     exc_info=True,
                 )
             break
@@ -166,10 +158,10 @@ def perform_download(item, path, retry_limit=15):
                 folder=os.path.dirname(path),
             )
             if i:
-                crate_logger.info("Retry recovered, for path: {path}".format(path=path))
+                crate_logger.info(f"Retry recovered, for path: {path}")
             path_to_add = os.path.dirname(path)
             wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
-            notify_user_with_gui("Downloaded: {}".format(path))
+            notify_user_with_gui(f"Downloaded: {path}")
         was_versioned = r_c.exists(redis_key(item["id"]))
         redis_set(
             r_c,
