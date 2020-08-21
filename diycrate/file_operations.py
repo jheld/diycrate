@@ -12,7 +12,8 @@ from boxsdk import Client
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
-from httpx import ConnectError, ProtocolError
+from requests.exceptions import ConnectionError
+from urllib3.exceptions import ProtocolError
 
 from .cache_utils import redis_key, redis_get, r_c
 from .iter_utils import SafeIter
@@ -102,7 +103,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 folder = client.folder(folder_id=folder_id).get()
                 break
             except (
-                ConnectError,
+                ConnectionError,
                 BrokenPipeError,
                 ProtocolError,
                 ConnectionResetError,
