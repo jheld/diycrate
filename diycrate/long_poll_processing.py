@@ -4,12 +4,21 @@ import logging
 import os
 import shutil
 import time
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 
+import dateutil
 from boxsdk import Client, exception
+from dateutil.parser import parse
 
-from diycrate.cache_utils import redis_set, r_c, redis_key, redis_get
+from diycrate.cache_utils import (
+    redis_set,
+    r_c,
+    redis_key,
+    redis_get,
+    local_or_box_file_m_time_key_func,
+)
 from diycrate.gui import notify_user_with_gui
 from diycrate.item_queue_io import download_queue
 from diycrate.log_utils import setup_logger
@@ -48,14 +57,14 @@ def process_item_create_long_poll(client, event):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
     if int(event["source"]["path_collection"]["total_count"]) > 1:
-        path = os.path.sep.join(
-            [
+        path = Path(
+            *list(
                 folder["name"]
                 for folder in event["source"]["path_collection"]["entries"][1:]
-            ]
+            )
         )
     else:
-        path = ""
+        path = Path()
     path = BOX_DIR / path
     if not path.is_dir():
         os.makedirs(path)
@@ -63,14 +72,33 @@ def process_item_create_long_poll(client, event):
     if obj_type == "folder":
         if not file_path.is_dir():
             os.makedirs(file_path)
+        box_item = client.folder(folder_id=obj_id).get(
+            fields=["id", "modified_at", "etag", "name"]
+        )
         redis_set(
             r_c,
-            client.folder(folder_id=obj_id),
-            os.path.getmtime(file_path),
+            box_item,
+            datetime.fromtimestamp(os.path.getmtime(file_path))
+            .astimezone(dateutil.tz.tzutc())
+            .timestamp(),
             BOX_DIR,
             True,
             path,
         )
+        time_data_map = {
+            Path(file_path)
+            .resolve()
+            .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+            .astimezone(dateutil.tz.tzutc())
+            .timestamp()
+        }
+        for mkey, mvalue in time_data_map.items():
+            r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+        r_c.set(
+            local_or_box_file_m_time_key_func(path / box_item.name, True),
+            parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+        )
+
     elif obj_type == "file":
         if not file_path.is_file():
             download_queue.put(
@@ -96,18 +124,19 @@ def process_item_trash_file(event, obj_id):
     if item_info:
         item_info = json.loads(str(item_info, encoding="utf-8", errors="strict"))
     if int(event["source"]["path_collection"]["total_count"]) > 1:
-        path = os.path.sep.join(
-            [
+        path = Path(
+            *list(
                 folder["name"]
                 for folder in event["source"]["path_collection"]["entries"][1:]
-            ]
+            )
         )
     else:
-        path = ""
+        path = Path()
     path = BOX_DIR / path
-    file_path = (
-        path / event["source"]["name"] if not item_info else item_info["file_path"]
-    )
+    if not item_info:
+        file_path = path / event["source"]["name"]
+    else:
+        file_path = path / item_info["file_path"]
     if file_path.exists():
         file_path.unlink()
     if r_c.exists(redis_key(obj_id)):
@@ -123,18 +152,19 @@ def process_item_trash_folder(event, obj_id):
     if item_info:
         item_info = json.loads(str(item_info, encoding="utf-8", errors="strict"))
     if int(event["source"]["path_collection"]["total_count"]) > 1:
-        path = os.path.sep.join(
-            [
+        path = Path(
+            *list(
                 folder["name"]
                 for folder in event["source"]["path_collection"]["entries"][1:]
-            ]
+            )
         )
     else:
-        path = ""
+        path = Path()
     path = BOX_DIR / path
-    file_path = (
-        path / event["source"]["name"] if not item_info else item_info["file_path"]
-    )
+    if not item_info:
+        file_path = path / event["source"]["name"]
+    else:
+        file_path = path / item_info["file_path"]
     if file_path.is_dir():
         # still need to get the parent_id
         for box_id in get_sub_ids(obj_id):
@@ -157,34 +187,36 @@ def process_item_upload_long_poll(client, event):
     obj_type = event["source"]["type"]
     if obj_type == "file":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = os.path.sep.join(
-                [
+            path = Path(
+                *list(
                     folder["name"]
                     for folder in event["source"]["path_collection"]["entries"][1:]
-                ]
+                )
             )
         else:
-            path = ""
+            path = Path()
         path = BOX_DIR / path
         if not path.exists():  # just in case this is a file in a new subfolder
             os.makedirs(path)
         download_queue.put(
             [
-                client.file(file_id=obj_id).get(),
+                client.file(file_id=obj_id).get(
+                    fields=["modified_at", "etag", "name", "path_collection"]
+                ),
                 path / event["source"]["name"],
                 client._oauth,
             ]
         )
     elif obj_type == "folder":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = os.path.sep.join(
-                [
+            path = Path(
+                *list(
                     folder["name"]
                     for folder in event["source"]["path_collection"]["entries"][1:]
-                ]
+                )
             )
         else:
-            path = ""
+            path = Path()
         path = BOX_DIR / path
         if not path.exists():  # just in case this is a file in a new subfolder
             os.makedirs(path)
@@ -192,10 +224,15 @@ def process_item_upload_long_poll(client, event):
         box_message = "new version"
         if not file_path.exists():
             os.makedirs(file_path)
+            box_item = client.folder(folder_id=obj_id).get(
+                fields=["id", "name", "etag", "modified_at"]
+            )
             redis_set(
                 r_c,
-                client.folder(folder_id=obj_id),
-                os.path.getmtime(file_path),
+                box_item,
+                datetime.fromtimestamp(os.path.getmtime(file_path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp(),
                 BOX_DIR,
                 True,
                 path,
@@ -211,14 +248,14 @@ def process_item_rename_long_poll(client, event):
     obj_type = event["source"]["type"]
     if obj_type == "file":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = os.path.sep.join(
-                [
+            path = Path(
+                *list(
                     folder["name"]
                     for folder in event["source"]["path_collection"]["entries"][1:]
-                ]
+                )
             )
         else:
-            path = ""
+            path = Path()
         path = BOX_DIR / path
         file_path = path / event["source"]["name"]
         file_obj = client.file(file_id=obj_id).get()
@@ -238,14 +275,14 @@ def process_item_rename_long_poll(client, event):
             download_queue.put([file_obj, file_path, client._oauth])
     elif obj_type == "folder":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
-            path = os.path.sep.join(
-                [
+            path = Path(
+                *list(
                     folder["name"]
                     for folder in event["source"]["path_collection"]["entries"][1:]
-                ]
+                )
             )
         else:
-            path = ""
+            path = Path()
         path = BOX_DIR / path
         file_path = path / event["source"]["name"]
         folder_obj = client.folder(folder_id=obj_id).get()
@@ -277,14 +314,14 @@ def process_item_move_long_poll(event):
                 )["file_path"]
             )
             if int(event["source"]["path_collection"]["total_count"]) > 1:
-                path = os.path.sep.join(
-                    [
+                path = Path(
+                    *list(
                         folder["name"]
                         for folder in event["source"]["path_collection"]["entries"][1:]
-                    ]
+                    )
                 )
             else:
-                path = ""
+                path = Path()
             path = BOX_DIR / path
             file_path = path / event["source"]["name"]
             if src_file_path.exists():

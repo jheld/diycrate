@@ -22,6 +22,7 @@ install_requires = [
     "httpx==0.14.1",
     "pyopenssl>=16.0.0",
     "cherrypy>=13.0.0",
+    "python-dateutil",
 ]
 
 extras_require = {

@@ -1,8 +1,19 @@
 import json
+import logging
 import os
 import time
+from os import PathLike
+from typing import Union, Optional, List
 
 import redis
+from boxsdk.object.file import File
+from boxsdk.object.folder import Folder
+
+from . import setup_logger
+
+setup_logger()
+
+crate_logger = logging.getLogger(__name__)
 
 
 def redis_key(key):
@@ -15,15 +26,15 @@ def redis_key(key):
 
 
 def redis_set(
-    cache_client,
-    cloud_item,
-    last_modified_time,
-    box_dir_path,
-    fresh_download=False,
-    folder=None,
-    sub_ids=None,
-    parent_id=None,
-):
+    cache_client: redis.Redis,
+    cloud_item: Union[File, Folder],
+    last_modified_time: float,
+    box_dir_path: PathLike,
+    fresh_download: bool = False,
+    folder: PathLike = None,
+    sub_ids: Optional[List[str]] = None,
+    parent_id: Optional[str] = None,
+) -> None:
     """
 
     :param cache_client:
@@ -32,9 +43,13 @@ def redis_set(
     :param box_dir_path:
     :param fresh_download:
     :param folder:
+    :param sub_ids:
+    :param parent_id:
     :return:
     """
-    key = redis_key(cloud_item["id"])
+    key = redis_key(cloud_item.object_id)
+    if "etag" not in cloud_item:
+        cloud_item = cloud_item.get(fields=["etag", "path_collection", "name"])
     if folder:
         path = folder
     elif int(cloud_item["path_collection"]["total_count"]) > 1:
@@ -56,6 +71,7 @@ def redis_set(
         item_info["parent_id"] = parent_id
     cache_client.set(key, json.dumps(item_info))
     cache_client.set("diy_crate.last_save_time_stamp", int(time.time()))
+    crate_logger.debug(f"Storing/updating info to redis: {item_info}")
     # assert redis_get(obj)
 
 
@@ -66,7 +82,7 @@ def redis_get(cache_client, obj):
     :param obj:
     :return:
     """
-    key = redis_key(obj["id"])
+    key = redis_key(obj.object_id)
     return json.loads(str(cache_client.get(key), encoding="utf-8", errors="strict"))
 
 
@@ -86,3 +102,11 @@ def id_for_file_path(cache_client, file_path):
 
 
 r_c = redis.StrictRedis()
+
+
+def local_or_box_file_m_time_key_func(x: Union[PathLike, str], from_box: bool) -> str:
+    return f"diy_crate.{'box' if from_box else 'local'}_mtime.{x}"
+
+
+def local_or_box_file_m_time(x: PathLike, from_box: bool) -> float:
+    return float(r_c.get(local_or_box_file_m_time_key_func(x, from_box)))

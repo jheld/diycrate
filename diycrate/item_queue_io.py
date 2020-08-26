@@ -5,21 +5,31 @@ import queue
 import random
 import time
 import logging
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import Callable, Any, List, NamedTuple, Union
 
+import dateutil
 from boxsdk import Client, OAuth2
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
+from dateutil.parser import parse
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
 
 from .file_operations import wm, mask
-from .cache_utils import redis_key, redis_set, redis_get, r_c
+from .cache_utils import (
+    redis_key,
+    redis_set,
+    redis_get,
+    r_c,
+    local_or_box_file_m_time_key_func,
+)
 from .gui import notify_user_with_gui
 from .log_utils import setup_logger
+from .oauth_utils import setup_remote_oauth
 
 setup_logger()
 
@@ -61,14 +71,49 @@ def perform_upload(
         try:
             ret_val = callable_up()
             if was_list:
+                path_name = args[0]
                 item = ret_val  # is the new/updated item
                 if isinstance(item, File):
                     client = Client(oauth)
                     file_obj = client.file(file_id=item.object_id).get()
                     redis_set(r_c, file_obj, last_modified_time, box_dir_path=BOX_DIR)
+                    r_c.set(
+                        local_or_box_file_m_time_key_func(path_name, False),
+                        datetime.fromtimestamp(Path(path_name).stat().st_mtime)
+                        .astimezone(dateutil.tz.tzutc())
+                        .timestamp(),
+                    )
+
+                    path_builder = BOX_DIR
+                    oauth = setup_remote_oauth(r_c)
+                    client = Client(oauth)
+                    for entry in (
+                        client.file(item.object_id)
+                        .get(fields=["path_collection"])
+                        .path_collection["entries"]
+                    ):
+                        if entry.id == "0":
+                            continue
+                        path_builder /= entry.name
+                        folder_entry = client.folder(entry.id).get(
+                            fields=["modified_at"]
+                        )
+                        r_c.set(
+                            local_or_box_file_m_time_key_func(path_builder, True),
+                            parse(folder_entry.modified_at)
+                            .astimezone(dateutil.tz.tzutc())
+                            .timestamp(),
+                        )
+
             break
         except BoxAPIException as e:
-            crate_logger.debug(f"{args}", exc_info=True)
+            crate_logger.info(f"{args}", exc_info=True)
+            if e.status == 400 and e.code == "item_name_invalid":
+                crate_logger.warning(
+                    f"darn, bad name on the file (box does not like), {args}, cannot upload.",
+                    exc_info=True,
+                )
+                break
             if e.status == 409:
                 crate_logger.warning(
                     f"Apparently Box says this item already exists..."
@@ -102,14 +147,16 @@ def download_queue_processor():
             item, path, oauth = download_queue.get()  # blocks
             if item["type"] == "file":
                 info = (
-                    redis_get(r_c, item) if r_c.exists(redis_key(item["id"])) else None
+                    redis_get(r_c, item)
+                    if r_c.exists(redis_key(item.object_id))
+                    else None
                 )
                 # client = Client(oauth)  # keep it around for easy access
                 # hack because we did not use to store the file_path,
                 # but do not want to force a download
                 if info and "file_path" not in info:
                     info["file_path"] = path
-                    r_c.set(redis_key(item["id"]), json.dumps(info))
+                    r_c.set(redis_key(item.object_id), json.dumps(info))
                     r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
                 # no version, or diff version, or the file does not exist locally
                 if not info or info["etag"] != item["etag"] or not os.path.exists(path):
@@ -123,7 +170,9 @@ def download_queue_processor():
                 download_queue.task_done()
 
 
-def perform_download(item, path, retry_limit=15):
+def perform_download(item: File, path, retry_limit=15):
+    if isinstance(path, str):
+        path = Path(path)
     for i in range(retry_limit):
         if os.path.basename(path).startswith(".~lock"):  # avoid downloading lock files
             break
@@ -151,28 +200,55 @@ def perform_download(item, path, retry_limit=15):
                 )
             break
         else:
-            redis_set(
-                r_c,
-                item,
-                os.path.getmtime(path),
-                box_dir_path=BOX_DIR,
-                folder=os.path.dirname(path),
-            )
             if i:
                 crate_logger.info(f"Retry recovered, for path: {path}")
             path_to_add = os.path.dirname(path)
             wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
             notify_user_with_gui(f"Downloaded: {path}")
-        was_versioned = r_c.exists(redis_key(item["id"]))
-        redis_set(
-            r_c,
-            item,
-            os.path.getmtime(path),
-            box_dir_path=BOX_DIR,
-            fresh_download=not was_versioned,
-            folder=os.path.dirname(path),
-        )
-        break
+            was_versioned = r_c.exists(redis_key(item.object_id))
+            redis_set(
+                r_c,
+                item,
+                datetime.fromtimestamp(os.path.getmtime(path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp(),
+                box_dir_path=BOX_DIR,
+                fresh_download=not was_versioned,
+                folder=os.path.dirname(path),
+            )
+            time_data_map = {
+                Path(path)
+                .resolve()
+                .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp()
+            }
+            for mkey, mvalue in time_data_map.items():
+                r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+            crate_logger.debug(f"downloaded {item}, modified_at: {item.modified_at}")
+            r_c.set(
+                local_or_box_file_m_time_key_func(path / item.name, True),
+                parse(item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+            )
+            path_builder = BOX_DIR
+            oauth = setup_remote_oauth(r_c)
+            client = Client(oauth)
+            for entry in (
+                client.file(item.object_id)
+                .get(fields=["path_collection"])
+                .path_collection["entries"]
+            ):
+                if entry.id == "0":
+                    continue
+                path_builder /= entry.name
+                folder_entry = client.folder(entry.id).get(fields=["modified_at"])
+                r_c.set(
+                    local_or_box_file_m_time_key_func(path_builder, True),
+                    parse(folder_entry.modified_at)
+                    .astimezone(dateutil.tz.tzutc())
+                    .timestamp(),
+                )
+            break
 
 
 class DownloadQueueItem(NamedTuple):
