@@ -19,13 +19,14 @@ install_requires = [
     "boxsdk>=2.0,<3.0",
     "pyinotify==0.9.6",
     "redis~=3.3.0",
-    "requests>=2.20.0,<3.0",
+    "httpx==0.14.1",
     "pyopenssl>=16.0.0",
     "cherrypy>=13.0.0",
+    "python-dateutil",
 ]
 
 extras_require = {
-    "dev": ["ipython", "check-manifest", "black", "flake8", "pre-commit"],
+    "dev": ["ipython", "check-manifest", "black", "flake8", "pre-commit", "mypy"],
     "test": ["tox", "check-manifest"],
 }
 
@@ -59,13 +60,12 @@ setup(
         "Environment :: Web Environment",
         "Intended Audience :: End Users/Desktop",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3 :: Only",
     ],
-    python_requires=">=3.5,<4",
+    python_requires=">=3.6,<4",
     project_urls={
         "Source": "https://github.com/jheld/diycrate/",
         "Issues": "https://github.com/jheld/diycrate/issues",

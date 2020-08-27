@@ -3,7 +3,7 @@ import argparse
 import configparser
 import json
 import logging
-import os
+from pathlib import Path
 
 import bottle
 from bottle import ServerAdapter
@@ -110,12 +110,12 @@ conf_obj = configparser.ConfigParser()
 def main():
     global conf_obj
 
-    conf_dir = os.path.abspath(os.path.expanduser("~/.config/diycrate_server"))
-    if not os.path.isdir(conf_dir):
-        os.mkdir(conf_dir)
-    cloud_credentials_file_path = os.path.join(conf_dir, "box.ini")
-    if not os.path.isfile(cloud_credentials_file_path):
-        open(cloud_credentials_file_path, "w").write("")
+    conf_dir = Path("~/.config/diycrate_server").expanduser().resolve()
+    if not conf_dir.is_dir():
+        conf_dir.mkdir()
+    cloud_credentials_file_path = conf_dir / "box.ini"
+    if not cloud_credentials_file_path.is_file():
+        cloud_credentials_file_path.write_text("")
     conf_obj.read(cloud_credentials_file_path)
     args = get_arg_parser()
 
@@ -128,7 +128,8 @@ def main():
     }
     configure_ssl_conf(args, conf_obj)
 
-    conf_obj.write(open(cloud_credentials_file_path, "w"))
+    with cloud_credentials_file_path.open("w") as fh:
+        conf_obj.write(fh)
     bottle_app.run(server=SSLCherryPyServer, port=8081, host="0.0.0.0")
 
 
@@ -144,30 +145,26 @@ def configure_ssl_conf(args, conf_obj):
         if not args.privkey_pem_path:
             raise ValueError("Need a valid privkey_pem_path")
         conf_obj["ssl"] = {
-            "cacert_pem_path": os.path.abspath(
-                os.path.expanduser(args.cacert_pem_path)
-            ),
-            "privkey_pem_path": os.path.abspath(
-                os.path.expanduser(args.privkey_pem_path)
-            ),
+            "cacert_pem_path": Path(args.cacert_pem_path).expanduser().absolute(),
+            "privkey_pem_path": Path(args.privkey_pem_path).expanduser().absolute(),
         }
         if args.chain_pem_path:
-            conf_obj["ssl"]["chain_pem_path"] = os.path.abspath(
-                os.path.expanduser(args.chain_pem_path)
+            conf_obj["ssl"]["chain_pem_path"] = (
+                Path(args.chain_pem_path).expanduser().resolve()
             )
 
     conf_obj["ssl"] = {
-        "cacert_pem_path": os.path.abspath(os.path.expanduser(args.cacert_pem_path))
+        "cacert_pem_path": Path(args.cacert_pem_path).expanduser().resolve()
         if args.cacert_pem_path
         else conf_obj["ssl"]["cacert_pem_path"],
-        "privkey_pem_path": os.path.abspath(os.path.expanduser(args.privkey_pem_path))
+        "privkey_pem_path": Path(args.privkey_pem_path).expanduser().resolve()
         if args.privkey_pem_path
         else conf_obj["ssl"]["privkey_pem_path"],
     }
 
     if args.chain_pem_path or prev_chain_pem_path:
-        conf_obj["ssl"]["chain_pem_path"] = prev_chain_pem_path or os.path.abspath(
-            os.path.expanduser(args.chain_pem_path)
+        conf_obj["ssl"]["chain_pem_path"] = (
+            prev_chain_pem_path or Path(args.chain_pem_path).expanduser().resolve()
         )
 
 

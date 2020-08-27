@@ -1,7 +1,10 @@
 import logging
 import time
+from typing import Union
 
 from boxsdk import BoxAPIException
+from boxsdk.object.file import File
+from boxsdk.object.folder import Folder
 
 from .log_utils import setup_logger
 
@@ -11,15 +14,16 @@ crate_logger = logging.getLogger(__name__)
 
 
 class SafeIter:
-    def __init__(self, iterable, path=None):
+    def __init__(self, iterable, path=None, tries=5):
         self.iterable = iterable
         self.path = path
+        self.tries = tries or 5
 
     def __iter__(self):
         return self
 
-    def __next__(self):
-        tries = 5
+    def __next__(self) -> Union[File, Folder, None]:
+        tries = self.tries
         buffered_exc = None
         for _ in range(tries):
             try:
