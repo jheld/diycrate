@@ -5,7 +5,7 @@ from datetime import timedelta, datetime
 from functools import partial
 from os import PathLike
 from pathlib import Path
-from typing import Union, Optional, Dict
+from typing import Union, Optional, Dict, List
 
 import dateutil
 from bottle import Bottle
@@ -16,7 +16,7 @@ from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
 from dateutil.parser import parse
 
-from .file_operations import wm, mask, BOX_DIR, EventHandler, path_time_recurse_func
+from .file_operations import wm, mask, BOX_DIR, path_time_recurse_func
 from .item_queue_io import download_queue, upload_queue
 from .cache_utils import (
     redis_key,
@@ -37,9 +37,8 @@ def walk_and_notify_and_download_tree(
     path: PathLike,
     box_folder: Folder,
     oauth_obj: OAuth2,
+    bottle_app: Bottle,
     p_id: Optional[str] = None,
-    bottle_app: Optional[Bottle] = None,
-    file_event_handler: Optional[EventHandler] = None,
     local_only: bool = False,
 ) -> None:
     """
@@ -130,7 +129,6 @@ def walk_and_notify_and_download_tree(
                 box_folder,
                 box_item,
                 client,
-                file_event_handler,
                 fresh_download,
                 local_path,
                 oauth_obj,
@@ -187,11 +185,7 @@ def any_unresolved_modifications(
             ),
             key=lambda x: x[1],
         )
-        try:
-            newest_self_or_child_m_stamp = path_sorted_by_m_time[-1][1]
-        except IndexError:
-            newest_self_or_child_m_stamp = None
-        if newest_self_or_child_m_stamp:
+        if path_sorted_by_m_time:
             redis_path_sorted_by_m_time = sorted(
                 (
                     (
@@ -290,13 +284,21 @@ def any_unresolved_modifications(
             and b_oldest_child_modified_at
             and b_oldest_child
         ):
-            differences = [
-                ["local", [path_sorted_by_m_time[-1], redis_path_sorted_by_m_time[-1]]]
+            differences_full: List[
+                Dict[str, Union[str, List[List[Union[str, float]]]]]
+            ] = [
+                {
+                    "kind": "local",
+                    "value": [
+                        list(path_sorted_by_m_time[-1]),
+                        list(redis_path_sorted_by_m_time[-1]),
+                    ],
+                }
             ]
-            differences.append(
-                [
-                    "box",
-                    [
+            differences_full.append(
+                {
+                    "kind": "box",
+                    "value": [
                         [
                             (
                                 path
@@ -316,9 +318,13 @@ def any_unresolved_modifications(
                             box_redis_path_sorted_by_m_time[-1][1],
                         ],
                     ],
-                ]
+                }
             )
-            differences = [item for item in differences if item[1][0] != item[1][1]]
+            differences = [
+                item
+                for item in differences_full
+                if item["value"][0] != item["value"][1]
+            ]
             if not differences:
                 crate_logger.debug(
                     f"folder {b_folder}, {b_folder.name} on "
@@ -372,7 +378,6 @@ def kick_off_sub_directory_box_folder_download_walk(
     box_folder: Folder,
     box_item: Union[File, Folder],
     client: Client,
-    file_event_handler: EventHandler,
     fresh_download: bool,
     local_path: PathLike,
     oauth_obj: OAuth2,
@@ -413,9 +418,8 @@ def kick_off_sub_directory_box_folder_download_walk(
                 local_path,
                 box_folder_obj,
                 oauth_obj,
+                bottle_app,
                 p_id=box_folder.object_id,
-                bottle_app=bottle_app,
-                file_event_handler=file_event_handler,
             )
             break
     end_t = time.monotonic()
@@ -445,14 +449,18 @@ def local_files_walk_pre_process(
         local_path = os.path.join(path, local_file)
         if os.path.isfile(local_path):
             crate_logger.info(f"upload, {local_path}, {local_file}")
+            m_timestamp = (
+                datetime.fromtimestamp(os.path.getmtime(local_path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp()
+            )
+
             upload_queue.put(
-                [
-                    datetime.fromtimestamp(os.path.getmtime(local_path))
-                    .astimezone(dateutil.tz.tzutc())
-                    .timestamp(),
+                (
+                    m_timestamp,
                     partial(cur_box_folder.upload, local_path, local_file),
                     oauth_obj,
-                ]
+                )
             )
     end_t = time.monotonic()
     crate_logger.debug(
@@ -460,7 +468,7 @@ def local_files_walk_pre_process(
     )
 
 
-def re_walk(path, box_folder, oauth_obj, bottle_app=None, file_event_handler=None):
+def re_walk(path, box_folder, oauth_obj, bottle_app: Bottle, file_event_handler=None):
     """
 
     :param path:
@@ -472,36 +480,12 @@ def re_walk(path, box_folder, oauth_obj, bottle_app=None, file_event_handler=Non
     """
     while True:
         try:
-            # start = time.time()
-            # crate_logger.info("Starting walk.")
-            # walk_and_notify_and_download_tree(
-            #     path,
-            #     box_folder,
-            #     oauth_obj,
-            #     bottle_app=bottle_app,
-            #     file_event_handler=file_event_handler,
-            #     local_only=True,
-            # )
-            # end = time.time()
-            # duration = int(end - start)
-            # if duration >= 60:
-            #     duration = round(timedelta(seconds=duration) / timedelta(minutes=1), 2)
-            #     unit = "m"
-            # else:
-            #     unit = "s"
-            # crate_logger.info(f"Finished local walking! Took {duration}{unit}")
             start = time.time()
             crate_logger.info("Starting walk.")
             wm.add_watch(path.as_posix(), mask, rec=True, auto_add=True)
-            walk_and_notify_and_download_tree(
-                path,
-                box_folder,
-                oauth_obj,
-                bottle_app=bottle_app,
-                file_event_handler=file_event_handler,
-            )
+            walk_and_notify_and_download_tree(path, box_folder, oauth_obj, bottle_app)
             end = time.time()
-            duration = int(end - start)
+            duration: Union[int, float] = int(end - start)
             if duration >= 60:
                 duration = round(timedelta(seconds=duration) / timedelta(minutes=1), 2)
                 unit = "m"

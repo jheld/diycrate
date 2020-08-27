@@ -14,6 +14,7 @@ from boxsdk import Client
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
+from dateutil import tz
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
 
@@ -890,7 +891,7 @@ def path_time_recurse_func(cur_path, wm=None) -> Dict[str, float]:
         Path(cur_path)
         .resolve()
         .as_posix(): datetime.fromtimestamp(os.path.getmtime(cur_path))
-        .astimezone(dateutil.tz.tzutc())
+        .astimezone(tz.UTC)
         .timestamp()
     }
     cur_path = Path(cur_path)

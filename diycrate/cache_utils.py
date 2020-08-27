@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from os import PathLike
+from pathlib import Path
 from typing import Union, Optional, List
 
 import redis
@@ -31,7 +32,7 @@ def redis_set(
     last_modified_time: float,
     box_dir_path: PathLike,
     fresh_download: bool = False,
-    folder: PathLike = None,
+    folder: str = None,
     sub_ids: Optional[List[str]] = None,
     parent_id: Optional[str] = None,
 ) -> None:
@@ -51,19 +52,24 @@ def redis_set(
     if "etag" not in cloud_item:
         cloud_item = cloud_item.get(fields=["etag", "path_collection", "name"])
     if folder:
-        path = folder
+        path = Path(folder)
     elif int(cloud_item["path_collection"]["total_count"]) > 1:
-        path = "{}".format(os.path.sep).join(
-            [folder["name"] for folder in cloud_item["path_collection"]["entries"][1:]]
+        path = Path(
+            os.path.sep.join(
+                [
+                    folder["name"]
+                    for folder in cloud_item["path_collection"]["entries"][1:]
+                ]
+            )
         )
     else:
-        path = ""
-    path = os.path.join(box_dir_path, path)
+        path = Path()
+    path = Path(box_dir_path) / path
     item_info = {
         "fresh_download": fresh_download,
         "time_stamp": last_modified_time,
         "etag": cloud_item["etag"],
-        "file_path": os.path.join(path, cloud_item["name"]),
+        "file_path": path / cloud_item["name"],
     }
     if sub_ids is not None:
         item_info["sub_ids"] = sub_ids

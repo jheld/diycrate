@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Callable, Any, List, NamedTuple, Union
+from typing import Callable, Any, List, NamedTuple, Union, Tuple
 
 import dateutil
 from boxsdk import Client, OAuth2
@@ -46,7 +46,7 @@ def upload_queue_processor():
             callable_up = upload_queue.get()  # blocks
             # TODO: pass in the actual item being updated/uploaded,
             #  so we can do more intelligent retry mechanisms
-            was_list = isinstance(callable_up, list)
+            was_list = isinstance(callable_up, (list, tuple))
             last_modified_time = oauth = None
             if was_list:
                 last_modified_time, callable_up, oauth = callable_up
@@ -257,13 +257,7 @@ class DownloadQueueItem(NamedTuple):
     oauth: OAuth2
 
 
-class ListBasedUploadQueueItem(NamedTuple):
-    last_modified_time: float
-    callable_up: Callable[..., Any]
-    oauth: OAuth2
-
-
-UploadQueueItem = Union[Callable[..., Any], List[ListBasedUploadQueueItem]]
+UploadQueueItem = Union[Callable[..., Any], Tuple[float, Callable[..., Any], OAuth2]]
 
 download_queue: "queue.Queue[DownloadQueueItem]" = queue.Queue()
 upload_queue: "queue.Queue[UploadQueueItem]" = queue.Queue()
