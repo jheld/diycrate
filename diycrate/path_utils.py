@@ -109,10 +109,6 @@ def walk_and_notify_and_download_tree(
     for box_item in safe_iter:
         if box_item is None:
             continue
-        r_c.set(
-            local_or_box_file_m_time_key_func(path / box_item.name, True),
-            parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
-        )
         if box_item.object_id not in ids_in_folder:
             ids_in_folder.append(box_item.object_id)
         if box_item["name"] in local_files:
@@ -136,6 +132,10 @@ def walk_and_notify_and_download_tree(
             )
         else:
             kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path)
+        r_c.set(
+            local_or_box_file_m_time_key_func(path / box_item.name, True),
+            parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+        )
     if not local_only:
         redis_set(
             cache_client=r_c,
@@ -159,29 +159,13 @@ def any_unresolved_modifications(
     b_folder: Folder, path: Path, time_data_map: Dict[str, float]
 ) -> bool:
     have_any = True
-    b_children = sorted(
-        b_folder.get_items(fields=["name", "modified_at", "path_collection"]),
-        key=lambda x: datetime.fromisoformat(x.modified_at)
-        .astimezone(dateutil.tz.tzutc())
-        .timestamp(),
-    )
-    b_oldest_child: Optional[Union[Folder, File]] = b_children[
-        -1
-    ] if b_children else None
-    b_oldest_child_modified_at = (
-        datetime.fromisoformat(b_oldest_child.modified_at)
-        .astimezone(dateutil.tz.tzutc())
-        .timestamp()
-        if b_oldest_child
-        else None
-    )
     b_folder_modified_at = b_folder["modified_at"]
     if b_folder_modified_at:
         path_sorted_by_m_time = sorted(
             (
                 (Path(k).as_posix(), v)
                 for k, v in time_data_map.items()
-                if path in Path(k).parents
+                if path in Path(k).parents or Path(k) == path
             ),
             key=lambda x: x[1],
         )
@@ -231,17 +215,40 @@ def any_unresolved_modifications(
                         .timestamp(),
                     ]
                 )
-                if (
-                    path_sorted_by_m_time[-1] == redis_path_sorted_by_m_time[-1]
-                    and box_current_path_and_m_time
-                    == box_redis_path_sorted_by_m_time[-1]
-                ):
+                differences_full = []
+                differences_full.append(
+                    {
+                        "kind": "local",
+                        "value": [
+                            list(path_sorted_by_m_time[-1]),
+                            list(redis_path_sorted_by_m_time[-1]),
+                        ],
+                    }
+                )
+                differences_full.append(
+                    {
+                        "kind": "box",
+                        "value": [
+                            list(box_current_path_and_m_time),
+                            list(box_redis_path_sorted_by_m_time[-1]),
+                        ],
+                    }
+                )
+                differences = [
+                    item
+                    for item in differences_full
+                    if item["value"][0] != item["value"][1]
+                ]
+                if not differences:
                     crate_logger.debug(
                         f"Skipping walk on folder {b_folder}; "
                         f"neither the box or local history has changed since the last run."
                     )
 
                     have_any = False
+                else:
+                    # crate_logger.debug(f"are differences: {differences}")
+                    have_any = differences
     elif path == BOX_DIR:
         path_sorted_by_m_time = sorted(
             (
@@ -277,6 +284,35 @@ def any_unresolved_modifications(
             ),
             key=lambda x: x[1],
         )
+
+        b_children = sorted(
+            b_folder.get_items(fields=["name", "modified_at", "path_collection"]),
+            key=lambda x: datetime.fromisoformat(x.modified_at)
+            .astimezone(dateutil.tz.tzutc())
+            .timestamp(),
+        )
+        b_oldest_child: Optional[Union[Folder, File]] = b_children[
+            -1
+        ] if b_children else None
+        if b_oldest_child:
+            crate_logger.debug([item.name for item in b_children])
+        b_oldest_child_modified_at = (
+            datetime.fromisoformat(b_oldest_child.modified_at)
+            .astimezone(dateutil.tz.tzutc())
+            .timestamp()
+            if b_oldest_child
+            else None
+        )
+        if box_redis_path_sorted_by_m_time:
+            # because of the keys pattern, we received back all paths which matched path*,
+            # but we really only want path | path/*/
+            # that is, our matching path, or just its first level files & sub directories.
+            box_redis_path_sorted_by_m_time = [
+                item
+                for item in box_redis_path_sorted_by_m_time
+                if Path(item[0]).parent == path or Path(item[0]) == path
+            ]
+
         if (
             path_sorted_by_m_time
             and redis_path_sorted_by_m_time
@@ -295,28 +331,22 @@ def any_unresolved_modifications(
                     ],
                 }
             ]
+            box_current_path_of_choice = (
+                path
+                / "/".join(
+                    entry.name
+                    for entry in b_oldest_child.path_collection["entries"]
+                    if entry.id != "0"
+                )
+                / b_oldest_child.name
+            ).as_posix()
+            box_redis_entry_of_choice = list(box_redis_path_sorted_by_m_time[-1])
             differences_full.append(
                 {
                     "kind": "box",
                     "value": [
-                        [
-                            (
-                                path
-                                / "/".join(
-                                    entry.name
-                                    for entry in b_oldest_child.path_collection[
-                                        "entries"
-                                    ]
-                                    if entry.id != "0"
-                                )
-                                / b_oldest_child.name
-                            ).as_posix(),
-                            b_oldest_child_modified_at,
-                        ],
-                        [
-                            box_redis_path_sorted_by_m_time[-1][0],
-                            box_redis_path_sorted_by_m_time[-1][1],
-                        ],
+                        [box_current_path_of_choice, b_oldest_child_modified_at],
+                        box_redis_entry_of_choice,
                     ],
                 }
             )
@@ -327,7 +357,7 @@ def any_unresolved_modifications(
             ]
             if not differences:
                 crate_logger.debug(
-                    f"folder {b_folder}, {b_folder.name} on "
+                    f"folder {b_folder} on "
                     f"{path.as_posix()} has not been changed locally, "
                     f"new local vs prev redis local ({path_sorted_by_m_time[-1]}, "
                     f"{redis_path_sorted_by_m_time[-1]}), "
@@ -339,6 +369,7 @@ def any_unresolved_modifications(
                 crate_logger.debug(
                     f"Difference detected on {path.as_posix()}, {differences}"
                 )
+                have_any = differences
     return have_any
 
 
