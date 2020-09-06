@@ -69,7 +69,7 @@ def redis_set(
         "fresh_download": fresh_download,
         "time_stamp": last_modified_time,
         "etag": cloud_item["etag"],
-        "file_path": path / cloud_item["name"],
+        "file_path": (path / cloud_item["name"]).as_posix(),
     }
     if sub_ids is not None:
         item_info["sub_ids"] = sub_ids
