@@ -271,6 +271,21 @@ def process_item_rename_long_poll(client, event):
             version_info["etag"] = file_obj["etag"]
             r_c.set(redis_key(obj_id), json.dumps(version_info))
             r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+            time_data_map = {
+                Path(file_path)
+                .resolve()
+                .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp()
+            }
+            for mkey, mvalue in time_data_map.items():
+                r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+            r_c.set(
+                local_or_box_file_m_time_key_func(path / file_obj.name, True),
+                parse(file_obj.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+            )
+            r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
+            r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
         else:
             download_queue.put([file_obj, file_path, client._oauth])
     elif obj_type == "folder":
@@ -298,6 +313,23 @@ def process_item_rename_long_poll(client, event):
             version_info["etag"] = folder_obj["etag"]
             r_c.set(redis_key(obj_id), json.dumps(version_info))
             r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+            time_data_map = {
+                Path(file_path)
+                .resolve()
+                .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp()
+            }
+            for mkey, mvalue in time_data_map.items():
+                r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+            r_c.set(
+                local_or_box_file_m_time_key_func(path / folder_obj.name, True),
+                parse(folder_obj.modified_at)
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp(),
+            )
+            r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
+            r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
 
 
 def process_item_move_long_poll(event):
@@ -355,6 +387,23 @@ def process_item_move_long_poll(event):
                 item_info["file_path"] = file_path
                 item_info["etag"] = event["source"]["etag"]
                 r_c.set(redis_key(obj_id), json.dumps(item_info))
+                time_data_map = {
+                    Path(file_path)
+                    .resolve()
+                    .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+                    .astimezone(dateutil.tz.tzutc())
+                    .timestamp()
+                }
+                for mkey, mvalue in time_data_map.items():
+                    r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+                r_c.set(
+                    local_or_box_file_m_time_key_func(file_path, True),
+                    parse(event["source"]["modified_at"])
+                    .astimezone(dateutil.tz.tzutc())
+                    .timestamp(),
+                )
+                r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
+                r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
 
 
 def get_sub_ids(box_id):
