@@ -130,7 +130,7 @@ def main():
 
     with cloud_credentials_file_path.open("w") as fh:
         conf_obj.write(fh)
-    bottle_app.run(server=SSLCherryPyServer, port=8081, host="0.0.0.0")
+    bottle_app.run(server=SSLCherryPyServer, port=args.port, host="0.0.0.0")
 
 
 def configure_ssl_conf(args, conf_obj):
@@ -200,6 +200,7 @@ def get_arg_parser():
         help="filepath to where the chain.pem is located",
         default="",
     )
+    arg_parser.add_argument("--port", type=int, help="server port", default=8081)
     args = arg_parser.parse_args()
     return args
 

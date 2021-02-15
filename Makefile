@@ -8,14 +8,14 @@ venv:
 	$(VIRTUALENV) venv
 
 install: venv
-	. venv/bin/activate; python -m pip install -U pip ; python -m pip install -e . --use-feature=2020-resolver
+	. venv/bin/activate; python -m pip install -U pip ; python -m pip install -e .
 
 install-dev: venv
-	. venv/bin/activate; python -m pip install -e .[dev] --use-feature=2020-resolver
+	. venv/bin/activate; python -m pip install -e .[dev]
 
 
 install-test: venv install
-	. venv/bin/activate; python -m pip install -e .[test] --use-feature=2020-resolver
+	. venv/bin/activate; python -m pip install -e .[test]
 
 
 test_lite: venv install-test
@@ -24,7 +24,7 @@ test_lite: venv install-test
 test: venv install-test test_lite clean
 
 release: venv
-	. venv/bin/activate; python -m pip install twine --use-feature=2020-resolver
+	. venv/bin/activate; python -m pip install twine
 	. venv/bin/activate; twine upload dist/*
 
 

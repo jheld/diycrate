@@ -8,6 +8,14 @@ https://github.com/pypa/sampleproject
 from setuptools import setup, find_packages
 import pathlib
 
+install_cmd = None
+try:
+    from install_cmd import InstallWrapper
+
+    install_cmd = InstallWrapper
+except ModuleNotFoundError:
+    pass
+
 here = pathlib.Path(__file__).parent.resolve()
 
 # Get the long description from the README file
@@ -23,12 +31,19 @@ install_requires = [
     "pyopenssl>=16.0.0",
     "cherrypy>=13.0.0",
     "python-dateutil",
+    "certbot==1.12.0",
 ]
 
 extras_require = {
     "dev": ["ipython", "check-manifest", "black", "flake8", "pre-commit", "mypy"],
     "test": ["tox", "check-manifest"],
 }
+
+extra = dict()
+
+if install_cmd:
+    cmdclass = {"install": install_cmd}
+    extra["cmdclass"] = cmdclass
 
 setup(
     name="diycrate",
@@ -70,4 +85,5 @@ setup(
         "Source": "https://github.com/jheld/diycrate/",
         "Issues": "https://github.com/jheld/diycrate/issues",
     },
+    **extra,
 )
