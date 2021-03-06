@@ -31,6 +31,8 @@ def auth_url():
 
     :return:
     """
+    crate_logger.info("auth url retrieved.")
+
     bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
     return json.dumps(
         bottle_app.oauth.get_authorization_url(
@@ -45,6 +47,7 @@ def authenticate_url():
 
     :return:
     """
+    crate_logger.info("authentication flow initiated.")
     bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
     auth_code = bottle.request.POST.get("code")
     return json.dumps(
@@ -63,6 +66,7 @@ def new_access():
     Performs refresh of tokens and returns the result
     :return:
     """
+    crate_logger.info("generating an access token.")
     bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
     access_token_to_refresh = bottle.request.POST.get("access_token")
     refresh_token = bottle.request.POST.get("refresh_token")
