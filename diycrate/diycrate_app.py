@@ -231,23 +231,34 @@ def main():
     arg_parser.add_argument("--port", type=int, help="local web server port")
     args = arg_parser.parse_args()
     had_oauth2 = conf_obj.has_section("oauth2")
-    if had_oauth2:  # this was before we used the RemoteOauth2 workflow,
+    if had_oauth2:  # this was likely before we used the RemoteOauth2 workflow,
         # so we don't want this info hanging around
-        conf_obj.remove_section("oauth2")
+        # but if there is only the client_id defined, leave it alone
+        if conf_obj["oauth2"].keys() - {"client_id"}:
+            conf_obj.remove_section("oauth2")
     if "ssl" not in conf_obj:
         if not args.cacert_pem_path:
             raise ValueError("Need a valid cacert_pem_path")
         if not args.privkey_pem_path:
             raise ValueError("Need a valid privkey_pem_path")
         conf_obj["ssl"] = {
-            "cacert_pem_path": Path(args.cacert_pem_path).expanduser().resolve(),
-            "privkey_pem_path": Path(args.privkey_pem_path).expanduser().resolve(),
+            "cacert_pem_path": Path(args.cacert_pem_path)
+            .expanduser()
+            .resolve()
+            .as_posix(),
+            "privkey_pem_path": Path(args.privkey_pem_path)
+            .expanduser()
+            .resolve()
+            .as_posix(),
         }
     conf_obj["ssl"] = {
-        "cacert_pem_path": Path(args.cacert_pem_path).expanduser().resolve()
+        "cacert_pem_path": Path(args.cacert_pem_path).expanduser().resolve().as_posix()
         if args.cacert_pem_path
         else conf_obj["ssl"]["cacert_pem_path"],
-        "privkey_pem_path": Path(args.privkey_pem_path).expanduser().resolve()
+        "privkey_pem_path": Path(args.privkey_pem_path)
+        .expanduser()
+        .resolve()
+        .as_posix()
         if args.privkey_pem_path
         else conf_obj["ssl"]["privkey_pem_path"],
     }
@@ -294,7 +305,7 @@ def main():
         oauth = bottle_app.oauth
     else:
         try:
-            oauth = setup_remote_oauth(r_c)
+            oauth = setup_remote_oauth(r_c, conf_obj)
             start_cloud_threads(oauth)
             bottle_app.started_cloud_threads = True
         except exception.BoxOAuthException:

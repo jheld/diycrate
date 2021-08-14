@@ -13,6 +13,9 @@ install: venv
 install-dev: venv
 	. venv/bin/activate; python -m pip install -e .[dev]
 
+install-ci: venv
+	. venv/bin/activate; python -m pip install -e .[ci]
+
 
 install-test: venv install
 	. venv/bin/activate; python -m pip install -e .[test]

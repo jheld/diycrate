@@ -85,7 +85,7 @@ def perform_upload(
                     )
 
                     path_builder = BOX_DIR
-                    oauth = setup_remote_oauth(r_c)
+                    oauth = setup_remote_oauth(r_c, conf=conf_obj)
                     client = Client(oauth)
                     for entry in (
                         client.file(item.object_id)
@@ -231,7 +231,7 @@ def perform_download(item: File, path, retry_limit=15):
                 parse(item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
             )
             path_builder = BOX_DIR
-            oauth = setup_remote_oauth(r_c)
+            oauth = setup_remote_oauth(r_c, conf=conf_obj)
             client = Client(oauth)
             for entry in (
                 client.file(item.object_id)

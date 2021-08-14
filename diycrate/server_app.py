@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import argparse
 import configparser
 import json
@@ -77,6 +76,9 @@ def new_access():
         el.decode(encoding="utf-8", errors="strict") if isinstance(el, bytes) else el
         for el in refresh_response
     ]
+    # we've done the work, so let's wipe the temporary state adjustment clean
+    bottle_app.oauth._access_token = None
+    bottle_app.oauth._refresh_token = None
     return json.dumps(str_response)
 
 

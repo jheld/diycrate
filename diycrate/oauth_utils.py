@@ -71,13 +71,15 @@ def get_access_token(access_token):
     return access_token
 
 
-def setup_remote_oauth(cache_client, retrieve_access_token=get_access_token):
+def setup_remote_oauth(cache_client, retrieve_access_token=get_access_token, conf=None):
     """
     sets up the oauth instance with credentials and runtime callback.
     :param cache_client:
     :param retrieve_access_token:
+    :param conf:
     :return:
     """
+    conf = conf or {}
     access_token = cache_client.get("diy_crate.auth.access_token")
 
     if isinstance(access_token, bytes):
@@ -87,7 +89,7 @@ def setup_remote_oauth(cache_client, retrieve_access_token=get_access_token):
     if isinstance(refresh_token, bytes):
         refresh_token = refresh_token.decode(encoding="utf-8")
     oauth = RemoteOAuth2(
-        client_id="",
+        client_id=conf.get("oauth2", {}).get("client_id", ""),
         client_secret="",
         access_token=access_token,
         refresh_token=refresh_token,
@@ -115,14 +117,15 @@ def store_tokens_callback(access_token, refresh_token):
 
 
 def oauth_dance(redis_client, conf, bottle_app, file_event_handler, bottle_thread=None):
-    bottle_app.oauth = file_event_handler.oauth = setup_remote_oauth(redis_client)
-
-    resp = httpx.get(
-        conf["box"]["authorization_url"],
-        params={"redirect_url": f"https://localhost:{conf['box']['web_server_port']}/"},
-        verify=True,
+    bottle_app.oauth = file_event_handler.oauth = setup_remote_oauth(
+        redis_client, conf=conf
     )
-    auth_url, bottle_app.csrf_token = resp.json()
+    redirect_url_domain = "127.0.0.1"
+    (auth_url, csrf_token) = bottle_app.oauth.get_authorization_url(
+        redirect_url=f"https://{redirect_url_domain}:{conf['box']['web_server_port']}/"
+    )
+    print(auth_url, csrf_token)
+    bottle_app.csrf_token = csrf_token
     if bottle_thread and not bottle_thread.is_alive():
         bottle_thread.start()
     webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth

@@ -36,8 +36,17 @@ def certbot_runner():
         ["certbot", "certificates"], check=True, capture_output=True
     )
     if domain not in bytes.decode(certificates_cmd_result.stdout):
-        subprocess.run(["certbot", "--standalone"], check=True)
-        print("certbot configuration complete :)")
+        try:
+            subprocess.run(["certbot", "--standalone"], check=True)
+        except subprocess.CalledProcessError as e:
+            print(
+                f"certbot may not be installed, "
+                f"or the command issued may not be configured correctly. "
+                f":(. "
+                f"return code: {e.returncode}"
+            )
+        else:
+            print("certbot configuration complete :)")
 
     else:
         print("certbot already configured :)")

@@ -36,6 +36,7 @@ install_requires = [
 
 extras_require = {
     "dev": ["ipython", "check-manifest", "black", "flake8", "pre-commit", "mypy"],
+    "ci": ["python-digitalocean"],
     "test": ["tox", "check-manifest"],
 }
 
@@ -78,6 +79,7 @@ setup(
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3 :: Only",
     ],
     python_requires=">=3.6,<4",
