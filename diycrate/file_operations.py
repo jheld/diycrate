@@ -8,6 +8,7 @@ from functools import partial
 from pathlib import Path
 from typing import Union, List, Dict
 
+import boxsdk.object.file
 import dateutil
 import pyinotify
 from boxsdk import Client
@@ -657,7 +658,57 @@ class EventHandler(pyinotify.ProcessEvent):
                     # do not yet support moving and renaming in one go
                     assert src_folder["name"] == dest_event.name
             elif entry["name"] == dest_event.name:
-                move_from_remote = True
+                if (
+                    Path(src_event.path) == Path(dest_event.path)
+                    and Path(src_event.name).stem == dest_event.name
+                    and src_event.name != dest_event.name
+                ):
+                    crate_logger.info(
+                        f"Detected conceptual same directory temp file rename from "
+                        f"{src_event.name=} to {dest_event.name=}"
+                    )
+                    cur_offset = 0
+                    cur_entry: Union[boxsdk.object.file.File, boxsdk.object.file.Item]
+                    for cur_entry in cur_box_folder.get_items(
+                        offset=cur_offset, limit=limit
+                    ):
+                        matching_name = cur_entry["name"] == os.path.basename(
+                            dest_event.pathname
+                        )
+                        if matching_name:
+                            crate_logger.debug(f"{cur_entry=} {type(cur_entry)=}")
+
+                        did_find_cur_file = (
+                            is_file and matching_name and isinstance(cur_entry, File)
+                        )
+                        did_find_cur_folder = (
+                            is_dir and matching_name and isinstance(cur_entry, Folder)
+                        )
+                        if did_find_cur_file:
+                            self.upload_queue.put(
+                                [
+                                    datetime.fromtimestamp(
+                                        Path(dest_event.pathname).stat().st_mtime
+                                    )
+                                    .astimezone(dateutil.tz.tzutc())
+                                    .timestamp(),
+                                    partial(
+                                        cur_entry.update_contents, dest_event.pathname
+                                    ),
+                                    self.oauth,
+                                ]
+                            )
+                            break
+                        elif did_find_cur_folder:
+                            crate_logger.debug(
+                                "do not currently support moving a same name folder "
+                                "into parent with"
+                                "folder inside of the same name -- would may need "
+                                "to update the contents"
+                            )
+                            break
+                else:
+                    move_from_remote = True
         if (
             not move_from_remote
         ):  # if it was moved from a different folder on remote, could be false still
