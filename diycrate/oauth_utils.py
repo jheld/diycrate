@@ -1,4 +1,6 @@
 import webbrowser
+from configparser import ConfigParser
+from typing import Union
 
 import httpx
 
@@ -79,7 +81,7 @@ def setup_remote_oauth(cache_client, retrieve_access_token=get_access_token, con
     :param conf:
     :return:
     """
-    conf = conf or {}
+    conf: Union[ConfigParser, dict] = conf or {}
     access_token = cache_client.get("diy_crate.auth.access_token")
 
     if isinstance(access_token, bytes):
@@ -88,8 +90,15 @@ def setup_remote_oauth(cache_client, retrieve_access_token=get_access_token, con
 
     if isinstance(refresh_token, bytes):
         refresh_token = refresh_token.decode(encoding="utf-8")
+    if isinstance(conf, ConfigParser):
+        client_id = (
+            (conf["oauth2"]["client_id"] or "") if conf.has_section("oauth2") else ""
+        )
+    else:
+        # raise Exception
+        client_id = conf.get("oauth2", {}).get("client_id", "")
     oauth = RemoteOAuth2(
-        client_id=conf.get("oauth2", {}).get("client_id", ""),
+        client_id=client_id,
         client_secret="",
         access_token=access_token,
         refresh_token=refresh_token,
