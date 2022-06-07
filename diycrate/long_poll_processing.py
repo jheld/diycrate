@@ -198,6 +198,9 @@ def process_item_upload_long_poll(client, event):
         path = BOX_DIR / path
         if not path.exists():  # just in case this is a file in a new subfolder
             os.makedirs(path)
+        crate_logger.debug(
+            f"Submitting {path / event['source']['name']=} onto the download queue."
+        )
         download_queue.put(
             [
                 client.file(file_id=obj_id).get(
@@ -442,8 +445,8 @@ def long_poll_event_listener(file_event_handler):
                 stream_position
             )
             for event in event_stream:
-                event_message = "{} happened! {} {}".format(
-                    str(event), event.event_type, event.created_at
+                event_message = (
+                    f"{str(event)=} happened! {event.event_type=} {event.created_at=}"
                 )
                 crate_logger.debug(event_message)
                 if event.get("message", "").lower() == "reconnect":
