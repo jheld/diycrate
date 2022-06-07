@@ -2,6 +2,8 @@ import configparser
 import subprocess
 
 from pathlib import Path
+from typing import Union
+
 from setuptools.command.install import install
 
 
@@ -32,10 +34,22 @@ def certbot_runner():
         ).parent.name
     )
 
-    certificates_cmd_result: subprocess.CompletedProcess = subprocess.run(
-        ["certbot", "certificates"], check=True, capture_output=True
-    )
-    if domain not in bytes.decode(certificates_cmd_result.stdout):
+    certificates_cmd_result: Union[subprocess.CompletedProcess, None]
+    try:
+        certificates_cmd_result = subprocess.run(
+            ["certbot", "certificates"], check=True, capture_output=True
+        )
+    except subprocess.CalledProcessError as e:
+        certificates_cmd_result = None
+        print(
+            f"certbot may not be installed, "
+            f"or the command issued may not be configured correctly. "
+            f":(. "
+            f"return code: {e.returncode}"
+        )
+    if certificates_cmd_result and domain not in bytes.decode(
+        certificates_cmd_result.stdout
+    ):
         try:
             subprocess.run(["certbot", "--standalone"], check=True)
         except subprocess.CalledProcessError as e:
@@ -48,5 +62,5 @@ def certbot_runner():
         else:
             print("certbot configuration complete :)")
 
-    else:
+    elif certificates_cmd_result:
         print("certbot already configured :)")
