@@ -305,7 +305,7 @@ def main():
         oauth = bottle_app.oauth
     else:
         try:
-            oauth = setup_remote_oauth(r_c, conf_obj)
+            oauth = setup_remote_oauth(r_c, conf=conf_obj)
             start_cloud_threads(oauth)
             bottle_app.started_cloud_threads = True
         except exception.BoxOAuthException:
