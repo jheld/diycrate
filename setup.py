@@ -48,7 +48,7 @@ if install_cmd:
 
 setup(
     name="diycrate",
-    version="0.2.11.1a2",
+    version="0.2.11.1a3",
     author="Jason Held",
     author_email="jasonsheld@gmail.com",
     description="box.com for linux -- unofficial, based on python SDK",
