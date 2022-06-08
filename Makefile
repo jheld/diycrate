@@ -33,12 +33,11 @@ release: venv
 
 build: venv
 	. venv/bin/activate; python -m setup sdist
-	. venv/bin/activate; python -m pip wheel --wheel-dir=dist_wheels .
+	. venv/bin/activate; python -m pip wheel --no-deps --wheel-dir=dist .
 
 
 
 clean:
 	rm -rf diycrate.egg-info
 	rm -rf dist
-	rm -rf dist_wheels
 	rm -rf build
