@@ -19,7 +19,12 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install -e .[test]
+        python -m pip install -e .
+        python -m pip install toml-cli
+        output=$(toml get --toml-path pyproject.toml project.dependencies)
+        output=${output:1:-1}
+        IFS=" " read -a myarray <<< $output
+        for item in ${myarray[@]}; do python -m pip install $(echo $item | sed 's:^.\(.*\)\x27.*$:\1:'); done
         python -m pip install tox tox-gh-actions
 
     - name: Run Tests
