@@ -22,7 +22,7 @@ install-test: venv install
 
 
 test_lite: venv install-test
-	. venv/bin/activate; tox
+	. venv/bin/activate; python -m pip freeze | grep -v diycrate > requirements.txt; tox; rm requirements.txt;
 
 test: venv install-test test_lite clean
 
