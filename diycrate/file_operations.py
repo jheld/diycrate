@@ -864,6 +864,7 @@ class EventHandler(pyinotify.ProcessEvent):
         found_from = False
         to_trash = trash_directory == Path(event.pathname).parent
         to_box = BOX_DIR in Path(event.pathname).parents
+        move_event_processed = None
         for move_event in self.move_events:
             was_moved_from = "in_moved_from" in move_event.maskname.lower()
             if (
@@ -878,7 +879,17 @@ class EventHandler(pyinotify.ProcessEvent):
                     self.operations.append([move_event, "delete"])
                 else:
                     self.operations.append([[move_event, event], "move"])
+                move_event_processed = move_event
                 break
+        if move_event_processed:
+            try:
+                self.move_events.remove(move_event_processed)
+            except ValueError:
+                crate_logger.warning(
+                    f"Found a matching src moved from {move_event_processed=}, "
+                    f"but move_events no longer contained when we tried to remove, hmm.",
+                    exc_info=True,
+                )
         if not found_from and (not to_trash and to_box):
             self.operations.append(
                 [event, "modify"]
