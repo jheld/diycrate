@@ -171,7 +171,8 @@ def process_item_trash_folder(event, obj_id):
             r_c.delete(redis_key(box_id))
         r_c.delete(redis_key(obj_id))
         shutil.rmtree(file_path)
-        parent_id = r_c.get(redis_key(obj_id)).get("parent_id")
+        obj_cache_data = r_c.get(redis_key(obj_id))
+        parent_id = obj_cache_data.get("parent_id") if obj_cache_data else None
         if parent_id:
             parent_folder = r_c.get(redis_key(parent_id))
             sub_ids = parent_folder.get("sub_ids", [])
@@ -179,7 +180,9 @@ def process_item_trash_folder(event, obj_id):
                 sub_ids.remove(obj_id)
                 r_c.set(redis_key(parent_id), json.dumps(parent_folder))
             r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-        notify_user_with_gui("Box message: Deleted {}".format(file_path), crate_logger)
+        deletion_msg = f"Box message: Deleted {file_path}"
+        crate_logger.info(deletion_msg)
+        notify_user_with_gui(deletion_msg, crate_logger)
 
 
 def process_item_upload_long_poll(client, event):
