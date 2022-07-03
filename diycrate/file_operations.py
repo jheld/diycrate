@@ -15,6 +15,7 @@ from boxsdk import Client
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
+from boxsdk.util.chunked_uploader import ChunkedUploader
 from dateutil import tz
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
@@ -262,11 +263,14 @@ class EventHandler(pyinotify.ProcessEvent):
                 .astimezone(dateutil.tz.tzutc())
                 .timestamp()
             )
+            box_uploader: ChunkedUploader = cur_box_folder.get_chunked_uploader(
+                file_path.as_posix()
+            )
             self.upload_queue.put(
                 [
                     last_modified_time,
                     partial(
-                        cur_box_folder.upload, file_path.as_posix(), file_path.name
+                        box_uploader.start,
                     ),
                     self.oauth,
                 ]
