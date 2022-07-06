@@ -458,4 +458,4 @@ def long_poll_event_listener(file_event_handler):
         except (exception.BoxAPIException, AttributeError):
             crate_logger.warning("Box or AttributeError occurred.", exc_info=True)
         except Exception:
-            crate_logger.debug("General error occurred.", exc_info=True)
+            crate_logger.warning("General error occurred.", exc_info=True)

@@ -19,7 +19,6 @@ from dateutil.parser import parse
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
 
-from .file_operations import wm, mask
 from .cache_utils import (
     redis_key,
     redis_set,
@@ -202,8 +201,8 @@ def perform_download(item: File, path, retry_limit=15):
         else:
             if i:
                 crate_logger.info(f"Retry recovered, for path: {path}")
-            path_to_add = os.path.dirname(path)
-            wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
+            # path_to_add = os.path.dirname(path)
+            # wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
             notify_user_with_gui(f"Downloaded: {path}")
             was_versioned = r_c.exists(redis_key(item.object_id))
             redis_set(

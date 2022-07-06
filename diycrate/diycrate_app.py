@@ -16,7 +16,13 @@ from cheroot import wsgi as wsgiserver
 from cheroot.ssl.builtin import BuiltinSSLAdapter
 
 from diycrate.cache_utils import r_c
-from diycrate.file_operations import EventHandler, wm, in_moved_to, in_moved_from, mask
+from diycrate.file_operations import (
+    EventHandler,
+    wm,
+    in_moved_to,
+    in_moved_from,
+    mask,
+)
 from diycrate.item_queue_io import (
     upload_queue_processor,
     download_queue_processor,
@@ -50,7 +56,9 @@ trash_directory = Path("~/.local/share/Trash/files").expanduser()
 
 handler = EventHandler(upload_queue=upload_queue, bottle_app=bottle_app)
 
-notifier = pyinotify.ThreadedNotifier(wm, handler, read_freq=10)
+file_notify_read_freq = 3
+
+notifier = pyinotify.ThreadedNotifier(wm, handler, read_freq=file_notify_read_freq)
 notifier.coalesce_events()
 
 long_poll_thread = threading.Thread(target=long_poll_event_listener)
@@ -110,7 +118,8 @@ def start_cloud_threads(client_oauth):
     client = Client(client_oauth)
     handler.oauth = client_oauth
     bottle_app.oauth = client_oauth
-    wm.add_watch(BOX_DIR, mask, rec=False)
+    watches = wm.add_watch(BOX_DIR.as_posix(), mask, rec=True, auto_add=True)
+    crate_logger.info(watches)
     client.auth._access_token = r_c.get("diy_crate.auth.access_token")
     client.auth._refresh_token = r_c.get("diy_crate.auth.refresh_token")
     if client.auth._access_token:
@@ -144,7 +153,12 @@ def start_cloud_threads(client_oauth):
         upload_thread.daemon = True
         upload_thread.start()
     # local trash can
-    wm.add_watch(trash_directory, mask=in_moved_to | in_moved_from)
+    wm.add_watch(
+        trash_directory.as_posix(),
+        mask=in_moved_to | in_moved_from,
+        rec=True,
+        auto_add=True,
+    )
     if not long_poll_thread.is_alive():  # start before doing anything else
         long_poll_thread._args = (handler,)
         long_poll_thread.start()

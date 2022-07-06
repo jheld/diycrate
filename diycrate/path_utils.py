@@ -16,7 +16,7 @@ from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
 from dateutil.parser import parse
 
-from .file_operations import wm, mask, BOX_DIR, path_time_recurse_func
+from .file_operations import wm, BOX_DIR, path_time_recurse_func
 from .item_queue_io import download_queue, upload_queue
 from .cache_utils import (
     redis_key,
@@ -54,7 +54,7 @@ def walk_and_notify_and_download_tree(
     """
     start_t = time.monotonic()
     if os.path.isdir(path):
-        wm.add_watch(path, mask, rec=True, auto_add=True)
+        # wm.add_watch(path, mask, rec=True, auto_add=True)
         local_files = os.listdir(path)
     else:
         raise ValueError(f"path: {path} is not a path; cannot walk it.")
@@ -291,9 +291,9 @@ def any_unresolved_modifications(
             .astimezone(dateutil.tz.tzutc())
             .timestamp(),
         )
-        b_oldest_child: Optional[Union[Folder, File]] = b_children[
-            -1
-        ] if b_children else None
+        b_oldest_child: Optional[Union[Folder, File]] = (
+            b_children[-1] if b_children else None
+        )
         if b_oldest_child:
             crate_logger.debug([item.name for item in b_children])
         b_oldest_child_modified_at = (
@@ -513,7 +513,7 @@ def re_walk(path, box_folder, oauth_obj, bottle_app: Bottle, file_event_handler=
         try:
             start = time.time()
             crate_logger.info("Starting walk.")
-            wm.add_watch(path.as_posix(), mask, rec=True, auto_add=True)
+            # wm.add_watch(path.as_posix(), mask, rec=True, auto_add=True)
             walk_and_notify_and_download_tree(path, box_folder, oauth_obj, bottle_app)
             end = time.time()
             duration: Union[int, float] = int(end - start)
