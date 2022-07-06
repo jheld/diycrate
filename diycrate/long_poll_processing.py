@@ -11,6 +11,7 @@ from pathlib import Path
 import dateutil
 from boxsdk import Client, exception
 from dateutil.parser import parse
+from send2trash import send2trash
 
 from diycrate.cache_utils import (
     redis_set,
@@ -138,7 +139,7 @@ def process_item_trash_file(event, obj_id):
     else:
         file_path = path / item_info["file_path"]
     if file_path.exists():
-        file_path.unlink()
+        send2trash(file_path.as_posix())
     if r_c.exists(redis_key(obj_id)):
         r_c.delete(redis_key(obj_id))
         r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
