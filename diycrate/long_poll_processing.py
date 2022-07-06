@@ -270,10 +270,14 @@ def process_item_rename_long_poll(client, event):
             if not r_c.exists(redis_key(obj_id))
             else Path(redis_get(r_c, file_obj)["file_path"])
         )
-        if src_file_path and src_file_path.exists():
+        if (
+            src_file_path
+            and src_file_path.exists()
+            and not src_file_path.samefile(file_path)
+        ):
             version_info = redis_get(r_c, obj=file_obj)
             os.rename(src_file_path, file_path)
-            version_info["file_path"] = file_path
+            version_info["file_path"] = file_path.as_posix()
             version_info["etag"] = file_obj["etag"]
             r_c.set(redis_key(obj_id), json.dumps(version_info))
             r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
@@ -293,7 +297,22 @@ def process_item_rename_long_poll(client, event):
             r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
             r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
         else:
-            download_queue.put([file_obj, file_path, client._oauth])
+            try:
+                version_info = redis_get(r_c, obj=file_obj)
+            except TypeError:
+                crate_logger.error(
+                    f"Key likely did not exist in the cache for file_obj id {file_obj.object_id=}",
+                    exc_info=True,
+                )
+            else:
+                if not file_path.exists() or file_obj["etag"] != version_info["etag"]:
+                    crate_logger.info(
+                        f"Downloading the version from box, "
+                        f"on a rename operation, "
+                        f"and the etag (local {version_info['etag']=}) "
+                        f"(box {file_obj['etag']=}) is different"
+                    )
+                    download_queue.put([file_obj, file_path, client._oauth])
     elif obj_type == "folder":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
             path = Path(
@@ -315,7 +334,7 @@ def process_item_rename_long_poll(client, event):
         if src_file_path and src_file_path.exists():
             os.rename(src_file_path, file_path)
             version_info = redis_get(r_c, obj=folder_obj)
-            version_info["file_path"] = file_path
+            version_info["file_path"] = file_path.as_posix()
             version_info["etag"] = folder_obj["etag"]
             r_c.set(redis_key(obj_id), json.dumps(version_info))
             r_c.set("diy_crate.last_save_time_stamp", int(time.time()))

@@ -119,7 +119,7 @@ def start_cloud_threads(client_oauth):
     handler.oauth = client_oauth
     bottle_app.oauth = client_oauth
     watches = wm.add_watch(BOX_DIR.as_posix(), mask, rec=True, auto_add=True)
-    crate_logger.info(watches)
+    crate_logger.debug(watches)
     client.auth._access_token = r_c.get("diy_crate.auth.access_token")
     client.auth._refresh_token = r_c.get("diy_crate.auth.refresh_token")
     if client.auth._access_token:

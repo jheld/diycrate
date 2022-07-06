@@ -4,7 +4,7 @@ import os
 import time
 from os import PathLike
 from pathlib import Path
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Dict, Any
 
 import redis
 from boxsdk.object.file import File
@@ -35,7 +35,7 @@ def redis_set(
     folder: str = None,
     sub_ids: Optional[List[str]] = None,
     parent_id: Optional[str] = None,
-) -> None:
+) -> Dict[str, Any]:
     """
 
     :param cache_client:
@@ -76,9 +76,11 @@ def redis_set(
     if parent_id:
         item_info["parent_id"] = parent_id
     cache_client.set(key, json.dumps(item_info))
-    cache_client.set("diy_crate.last_save_time_stamp", int(time.time()))
+    last_save_time_stamp = int(time.time())
+    cache_client.set("diy_crate.last_save_time_stamp", last_save_time_stamp)
     crate_logger.debug(f"Storing/updating info to redis: {item_info}")
     # assert redis_get(obj)
+    return {key: item_info, "diy_crate.last_save_time_stamp": last_save_time_stamp}
 
 
 def redis_get(cache_client, obj):

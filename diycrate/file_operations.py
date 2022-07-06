@@ -1,4 +1,5 @@
 import configparser
+import json
 import os
 import threading
 import logging
@@ -17,12 +18,20 @@ from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
 from boxsdk.util.chunked_uploader import ChunkedUploader
 from dateutil import tz
+from dateutil.parser import parse
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
 
-from .cache_utils import redis_key, redis_get, r_c, local_or_box_file_m_time_key_func
+from .cache_utils import (
+    redis_key,
+    redis_get,
+    r_c,
+    local_or_box_file_m_time_key_func,
+    redis_set,
+)
 from .iter_utils import SafeIter
 from .log_utils import setup_logger
+from .oauth_utils import setup_remote_oauth
 
 setup_logger()
 
@@ -610,7 +619,53 @@ class EventHandler(pyinotify.ProcessEvent):
             if did_find_src_file:
                 src_file = client.file(file_id=entry["id"]).get()
                 if is_rename:
+                    last_modified_time = (
+                        datetime.fromtimestamp(
+                            Path(dest_event.pathname).stat().st_mtime
+                        )
+                        .astimezone(dateutil.tz.tzutc())
+                        .timestamp()
+                    )
+                    file_obj = client.file(file_id=src_file.object_id).get()
+                    data_sent_to_cache = redis_set(
+                        r_c, file_obj, last_modified_time, box_dir_path=BOX_DIR
+                    )
+                    version_info = data_sent_to_cache[redis_key(src_file.object_id)]
+                    r_c.set(
+                        local_or_box_file_m_time_key_func(dest_event.pathname, False),
+                        datetime.fromtimestamp(
+                            Path(dest_event.pathname).stat().st_mtime
+                        )
+                        .astimezone(dateutil.tz.tzutc())
+                        .timestamp(),
+                    )
                     src_file.rename(dest_event.name)
+                    file_obj = client.file(file_id=src_file.object_id).get()
+                    version_info["file_path"] = dest_event.pathname
+                    version_info["etag"] = file_obj["etag"]
+                    r_c.set(redis_key(src_file.object_id), json.dumps(version_info))
+                    r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                    path_builder = BOX_DIR
+                    oauth = setup_remote_oauth(r_c, conf=conf_obj)
+                    client = Client(oauth)
+                    for updated_entry in (
+                        client.file(file_obj.object_id)
+                        .get(fields=["path_collection"])
+                        .path_collection["entries"]
+                    ):
+                        if updated_entry.id == "0":
+                            continue
+                        path_builder /= updated_entry.name
+                        folder_entry = client.folder(updated_entry.id).get(
+                            fields=["modified_at"]
+                        )
+                        r_c.set(
+                            local_or_box_file_m_time_key_func(path_builder, True),
+                            parse(folder_entry.modified_at)
+                            .astimezone(dateutil.tz.tzutc())
+                            .timestamp(),
+                        )
+
                 else:
                     did_find_cur_file = os.path.isdir(
                         dest_event.pathname
