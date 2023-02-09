@@ -78,7 +78,7 @@ def redis_set(
     cache_client.set(key, json.dumps(item_info))
     last_save_time_stamp = int(time.time())
     cache_client.set("diy_crate.last_save_time_stamp", last_save_time_stamp)
-    crate_logger.debug(f"Storing/updating info to redis: {item_info}")
+    crate_logger.debug(f"Storing/updating info to redis:  {key=} {item_info=}")
     # assert redis_get(obj)
     return {key: item_info, "diy_crate.last_save_time_stamp": last_save_time_stamp}
 

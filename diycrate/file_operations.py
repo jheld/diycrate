@@ -60,7 +60,7 @@ class EventHandler(pyinotify.ProcessEvent):
         Extends the super to add cloud storage state.
         :return:
         """
-        our_keys = ["oauth", "upload_queue", "bottle_app"]
+        our_keys = ["oauth", "upload_queue", "bottle_app", "wait_time"]
         our_kargs = {k: kargs.get(k) for k in our_keys}
         for key in our_keys:
             kargs.pop(key, None)
@@ -71,7 +71,7 @@ class EventHandler(pyinotify.ProcessEvent):
         self.folders_from_box = []
         self.upload_queue = kargs["upload_queue"]
         self.operations = []
-        self.wait_time = 1
+        self.wait_time = kargs.get("wait_time", 1)
         self.oauth = kargs.get("oauth")
         self.operations_thread = threading.Thread(target=self.operation_coalesce)
         self.bottle_app = kargs.get("bottle_app")
@@ -722,7 +722,13 @@ class EventHandler(pyinotify.ProcessEvent):
             elif entry["name"] == dest_event.name:
                 if (
                     Path(src_event.path) == Path(dest_event.path)
-                    and Path(src_event.name).stem == dest_event.name
+                    and (
+                        Path(src_event.name).stem == dest_event.name
+                        or (
+                            Path(src_event.name).suffix == ".tmp"
+                            and Path(dest_event.name).suffix != ".tmp"
+                        )
+                    )
                     and src_event.name != dest_event.name
                 ):
                     crate_logger.info(
@@ -979,6 +985,8 @@ class EventHandler(pyinotify.ProcessEvent):
         ):  # avoid propagating lock files
             crate_logger.debug("Had a close on: {}".format(event))
             self.operations.append([event, "real_close"])
+        else:
+            crate_logger.debug(f"Skipping close on: {event.pathname=} due to `.~lock`")
 
 
 def get_box_folder(client, cur_box_folder, folder_id, retry_limit):

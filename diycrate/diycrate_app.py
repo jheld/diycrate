@@ -1,6 +1,7 @@
 import argparse
 import configparser
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -53,8 +54,15 @@ download_thread = threading.Thread(target=download_queue_processor)
 upload_thread = threading.Thread(target=upload_queue_processor)
 
 trash_directory = Path("~/.local/share/Trash/files").expanduser()
+wait_time = os.environ.get("DIY_CRATE_FILE_IO_OPERATIONS_WAIT_TIME_MS")
+if wait_time:
+    wait_time = int(wait_time) / 1000
+else:
+    wait_time = 1
 
-handler = EventHandler(upload_queue=upload_queue, bottle_app=bottle_app)
+handler = EventHandler(
+    upload_queue=upload_queue, bottle_app=bottle_app, wait_time=wait_time
+)
 
 file_notify_read_freq = 3
 
