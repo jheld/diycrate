@@ -7,9 +7,11 @@ import time
 from datetime import datetime
 from functools import partial
 from pathlib import Path
+from typing import Generator, Union, Mapping
 
 import dateutil
 from boxsdk import Client, exception
+from boxsdk.object.event import Event
 from dateutil.parser import parse
 from send2trash import send2trash
 
@@ -39,7 +41,7 @@ conf_obj.read(cloud_credentials_file_path)
 BOX_DIR = Path(conf_obj["box"]["directory"]).expanduser().resolve()
 
 
-def process_long_poll_event(client, event):
+def process_long_poll_event(client: Client, event: Union[Event, Mapping]):
     if event["event_type"] == "ITEM_CREATE":
         process_item_create_long_poll(client, event)
     if event["event_type"] == "ITEM_MOVE":
@@ -54,7 +56,7 @@ def process_long_poll_event(client, event):
         pass
 
 
-def process_item_create_long_poll(client, event):
+def process_item_create_long_poll(client: Client, event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
     if int(event["source"]["path_collection"]["total_count"]) > 1:
@@ -111,7 +113,7 @@ def process_item_create_long_poll(client, event):
             )
 
 
-def process_item_trash_long_poll(event):
+def process_item_trash_long_poll(event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
     if obj_type == "file":
@@ -120,7 +122,7 @@ def process_item_trash_long_poll(event):
         process_item_trash_folder(event, obj_id)
 
 
-def process_item_trash_file(event, obj_id):
+def process_item_trash_file(event: Union[Event, Mapping], obj_id):
     item_info = r_c.get(redis_key(obj_id))
     if item_info:
         item_info = json.loads(str(item_info, encoding="utf-8", errors="strict"))
@@ -148,7 +150,7 @@ def process_item_trash_file(event, obj_id):
     )
 
 
-def process_item_trash_folder(event, obj_id):
+def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
     item_info = r_c.get(redis_key(obj_id))
     if item_info:
         item_info = json.loads(str(item_info, encoding="utf-8", errors="strict"))
@@ -186,7 +188,7 @@ def process_item_trash_folder(event, obj_id):
         notify_user_with_gui(deletion_msg, crate_logger)
 
 
-def process_item_upload_long_poll(client, event):
+def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
     if obj_type == "file":
@@ -250,7 +252,7 @@ def process_item_upload_long_poll(client, event):
         )
 
 
-def process_item_rename_long_poll(client, event):
+def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
     if obj_type == "file":
@@ -358,7 +360,7 @@ def process_item_rename_long_poll(client, event):
             r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
 
 
-def process_item_move_long_poll(event):
+def process_item_move_long_poll(event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
     if obj_type in ("file", "folder"):
@@ -452,6 +454,9 @@ def get_sub_ids(box_id):
     return ids
 
 
+BOX_EVENT_IGNORED_TYPES = ["ITEM_PREVIEW"]
+
+
 def long_poll_event_listener(file_event_handler):
     """
     Receive and process remote cloud item events in real-time
@@ -462,18 +467,21 @@ def long_poll_event_listener(file_event_handler):
     long_poll_streamer = client.events()
 
     while True:
+        crate_logger.debug("About to get latest stream position.")
         try:
             stream_position = long_poll_streamer.get_latest_stream_position()
-            event_stream = long_poll_streamer.generate_events_with_long_polling(
-                stream_position
-            )
+            event_stream: Generator[
+                Union[Mapping, Event], None, None
+            ] = long_poll_streamer.generate_events_with_long_polling(stream_position)
             for event in event_stream:
+                if event.get("message", "").lower() == "reconnect":
+                    break
+                if event.event_type in BOX_EVENT_IGNORED_TYPES:
+                    continue
                 event_message = (
                     f"{str(event)=} happened! {event.event_type=} {event.created_at=}"
                 )
                 crate_logger.debug(event_message)
-                if event.get("message", "").lower() == "reconnect":
-                    break
                 process_long_poll_event(client, event)
         except (exception.BoxAPIException, AttributeError):
             crate_logger.warning("Box or AttributeError occurred.", exc_info=True)

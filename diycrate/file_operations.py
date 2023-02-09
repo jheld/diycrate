@@ -1,6 +1,7 @@
 import configparser
 import json
 import os
+import queue
 import threading
 import logging
 import time
@@ -70,37 +71,47 @@ class EventHandler(pyinotify.ProcessEvent):
         self.files_from_box = []
         self.folders_from_box = []
         self.upload_queue = kargs["upload_queue"]
+        self.incoming_operations = queue.Queue()
         self.operations = []
         self.wait_time = kargs.get("wait_time", 1)
         self.oauth = kargs.get("oauth")
-        self.operations_thread = threading.Thread(target=self.operation_coalesce)
+        self.operations_thread = threading.Thread(
+            target=self.incoming_operation_coalesce
+        )
         self.bottle_app = kargs.get("bottle_app")
         self.operations_thread.daemon = True
         self.operations_thread.start()
+
+    def incoming_operation_coalesce(self):
+        while True:
+            item = self.incoming_operations.get()
+            self.operations.append(item)
+            self.incoming_operations.task_done()
+            self.operation_coalesce()
 
     def operation_coalesce(self):
         """
         Coalesce and process the operations in a more timely-fashion.
         :return:
         """
-        while True:
-            time.sleep(self.wait_time)
-            cur_num_operations = len(self.operations)
-            if cur_num_operations:
-                operations_to_perform = self.operations[
-                    :cur_num_operations
-                ]  # keep a local copy for this loop-run
-                # operations list could have changed since the previous two instructions
-                # pycharm complained that I was re-assigning the instance
-                # variable outside of the __init__.
-                self.operations.clear()
-                self.operations.extend(
-                    self.operations[cur_num_operations:]
-                    if len(self.operations) > cur_num_operations
-                    else []
-                )
-                for operation in operations_to_perform:
-                    self.process_event(*operation)
+        # while True:
+        #     # time.sleep(self.wait_time)
+        cur_num_operations = len(self.operations)
+        if cur_num_operations:
+            operations_to_perform = self.operations[
+                :cur_num_operations
+            ]  # keep a local copy for this loop-run
+            # operations list could have changed since the previous two instructions
+            # pycharm complained that I was re-assigning the instance
+            # variable outside of the __init__.
+            self.operations.clear()
+            self.operations.extend(
+                self.operations[cur_num_operations:]
+                if len(self.operations) > cur_num_operations
+                else []
+            )
+            for operation in operations_to_perform:
+                self.process_event(*operation)
 
     @staticmethod
     def get_folder(client, folder_id: str) -> Folder:
@@ -890,7 +901,7 @@ class EventHandler(pyinotify.ProcessEvent):
         if not os.path.basename(event.pathname).startswith(
             ".~lock"
         ):  # avoid propagating lock files
-            self.operations.append([event, "create"])
+            self.incoming_operations.put([event, "create"])
 
     def process_IN_DELETE(self, event):
         """
@@ -899,7 +910,7 @@ class EventHandler(pyinotify.ProcessEvent):
         :return:
         """
         crate_logger.debug(event)
-        self.operations.append([event, "delete"])
+        self.incoming_operations.put([event, "delete"])
 
     def process_IN_MODIFY(self, event):
         """
@@ -910,7 +921,7 @@ class EventHandler(pyinotify.ProcessEvent):
         if not os.path.basename(event.pathname).startswith(
             ".~lock"
         ):  # avoid propagating lock files
-            self.operations.append([event, "modify"])
+            self.incoming_operations.put([event, "modify"])
 
     def process_IN_MOVED_FROM(self, event):
         """
@@ -947,9 +958,9 @@ class EventHandler(pyinotify.ProcessEvent):
                 # only count deletes that come from within the box path --
                 # though this should always be the case
                 if to_trash:
-                    self.operations.append([move_event, "delete"])
+                    self.incoming_operations.put([move_event, "delete"])
                 else:
-                    self.operations.append([[move_event, event], "move"])
+                    self.incoming_operations.put([[move_event, event], "move"])
                 move_event_processed = move_event
                 break
         if move_event_processed:
@@ -962,7 +973,7 @@ class EventHandler(pyinotify.ProcessEvent):
                     exc_info=True,
                 )
         if not found_from and (not to_trash and to_box):
-            self.operations.append(
+            self.incoming_operations.put(
                 [event, "modify"]
             )  # "close"/"modify" seems appropriate
             # allow moving from a ~.lock file...i guess that may be okay
@@ -984,7 +995,7 @@ class EventHandler(pyinotify.ProcessEvent):
             ".~lock"
         ):  # avoid propagating lock files
             crate_logger.debug("Had a close on: {}".format(event))
-            self.operations.append([event, "real_close"])
+            self.incoming_operations.put([event, "real_close"])
         else:
             crate_logger.debug(f"Skipping close on: {event.pathname=} due to `.~lock`")
 

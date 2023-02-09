@@ -68,7 +68,9 @@ def perform_upload(
 ):
     for x in range(retry_limit):
         try:
+            crate_logger.debug(f"Attempt upload{' ' + args[0] if was_list else ''}")
             ret_val = callable_up()
+            crate_logger.info(f"Completed upload{' ' + args[0] if was_list else ''}")
             if was_list:
                 path_name = args[0]
                 item = ret_val  # is the new/updated item
@@ -154,18 +156,30 @@ def download_queue_processor():
                 # hack because we did not use to store the file_path,
                 # but do not want to force a download
                 if info and "file_path" not in info:
+                    crate_logger.debug(
+                        f"updating local cache so the data is accurate, "
+                        f"but not doing the download {path=}"
+                    )
                     info["file_path"] = path
                     r_c.set(redis_key(item.object_id), json.dumps(info))
                     r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                if info and info["etag"] == item["etag"] and os.path.exists(path):
+                    crate_logger.debug(
+                        f"ETAG {info['etag']} for {path=} is identical and file exists locally, "
+                        f"will skip download."
+                    )
                 # no version, or diff version, or the file does not exist locally
                 if not info or info["etag"] != item["etag"] or not os.path.exists(path):
                     try:
+                        crate_logger.debug(f"attempt the download {path=}")
                         perform_download(item, path)
                     except (ConnectionResetError, ConnectionError):
                         crate_logger.debug("Error occurred.", exc_info=True)
                         time.sleep(5)
+                crate_logger.debug(f"marking task as done for {path=}")
                 download_queue.task_done()
             else:
+                crate_logger.debug(f"was not a file, marking task as done for {path=}")
                 download_queue.task_done()
 
 

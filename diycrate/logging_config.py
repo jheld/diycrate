@@ -1,3 +1,8 @@
+import os
+
+LOG_LEVEL = os.environ.get("DIY_CRATE_LOGGING_LEVEL")
+if not LOG_LEVEL:
+    LOG_LEVEL = "INFO"
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": True,
@@ -16,8 +21,12 @@ LOGGING = {
         }
     },
     "loggers": {
-        "diycrate": {"handlers": ["console"], "propagate": True, "level": "INFO"},
-        "diycrate_app": {"handlers": ["console"], "propagate": True, "level": "INFO"},
-        "__main__": {"handlers": ["console"], "propagate": True, "level": "INFO"},
+        "diycrate": {"handlers": ["console"], "propagate": True, "level": LOG_LEVEL},
+        "diycrate_app": {
+            "handlers": ["console"],
+            "propagate": True,
+            "level": LOG_LEVEL,
+        },
+        "__main__": {"handlers": ["console"], "propagate": True, "level": LOG_LEVEL},
     },
 }
