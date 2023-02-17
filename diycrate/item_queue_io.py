@@ -5,14 +5,15 @@ import queue
 import random
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Callable, Any, List, NamedTuple, Union, Tuple
+from typing import Callable, Any, List, NamedTuple, Union, Tuple, Mapping
 
 import dateutil
 from boxsdk import Client, OAuth2
 from boxsdk.exception import BoxAPIException
+from boxsdk.object.event import Event
 from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
 from dateutil.parser import parse
@@ -145,7 +146,16 @@ def download_queue_processor():
     """
     while True:
         if download_queue.not_empty:
-            item, path, oauth = download_queue.get()  # blocks
+            download_queue_item: DownloadQueueItem = download_queue.get()
+            item = download_queue_item.item
+            path = download_queue_item.path
+            event = download_queue_item.event
+            if event and r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+                crate_logger.debug(
+                    f"marking task as done due to already processed event ID for {path=}"
+                )
+                download_queue.task_done()
+                continue
             if item["type"] == "file":
                 info = (
                     redis_get(r_c, item)
@@ -181,6 +191,12 @@ def download_queue_processor():
             else:
                 crate_logger.debug(f"was not a file, marking task as done for {path=}")
                 download_queue.task_done()
+            if event:
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    (path.as_posix() if isinstance(path, Path) else path),
+                )
 
 
 def perform_download(item: File, path, retry_limit=15):
@@ -268,6 +284,7 @@ class DownloadQueueItem(NamedTuple):
     item: Union[File, Folder]
     path: Union[Path, str]
     oauth: OAuth2
+    event: Union[Event, Mapping, None]
 
 
 UploadQueueItem = Union[Callable[..., Any], Tuple[float, Callable[..., Any], OAuth2]]

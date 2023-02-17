@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Generator, Union, Mapping
@@ -12,7 +12,11 @@ from typing import Generator, Union, Mapping
 import dateutil
 from boxsdk import Client, exception
 from boxsdk.object.event import Event
+from boxsdk.object.events import UserEventsStreamType, Events
+from boxsdk.util.api_call_decorator import api_call
+from boxsdk.util.lru_cache import LRUCache
 from dateutil.parser import parse
+from requests import Timeout
 from send2trash import send2trash
 
 from diycrate.cache_utils import (
@@ -23,7 +27,7 @@ from diycrate.cache_utils import (
     local_or_box_file_m_time_key_func,
 )
 from diycrate.gui import notify_user_with_gui
-from diycrate.item_queue_io import download_queue
+from diycrate.item_queue_io import download_queue, DownloadQueueItem
 from diycrate.log_utils import setup_logger
 
 setup_logger()
@@ -59,6 +63,9 @@ def process_long_poll_event(client: Client, event: Union[Event, Mapping]):
 def process_item_create_long_poll(client: Client, event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
+    if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+        return
+
     if int(event["source"]["path_collection"]["total_count"]) > 1:
         path = Path(
             *list(
@@ -101,21 +108,28 @@ def process_item_create_long_poll(client: Client, event: Union[Event, Mapping]):
             local_or_box_file_m_time_key_func(path / box_item.name, True),
             parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
         )
+        r_c.setex(
+            f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
+        )
 
     elif obj_type == "file":
         if not file_path.is_file():
             download_queue.put(
-                [
+                DownloadQueueItem(
                     client.file(file_id=obj_id).get(),
                     path / event["source"]["name"],
                     client._oauth,
-                ]
+                    event,
+                )
             )
 
 
 def process_item_trash_long_poll(event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
+    if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+        return
+
     if obj_type == "file":
         process_item_trash_file(event, obj_id)
     elif obj_type == "folder":
@@ -147,6 +161,9 @@ def process_item_trash_file(event: Union[Event, Mapping], obj_id):
         r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
     notify_user_with_gui(
         "Box message: Deleted {}".format(file_path), crate_logger, expire_time=10000
+    )
+    r_c.setex(
+        f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
     )
 
 
@@ -186,11 +203,17 @@ def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
         deletion_msg = f"Box message: Deleted {file_path}"
         crate_logger.info(deletion_msg)
         notify_user_with_gui(deletion_msg, crate_logger)
+        r_c.setex(
+            f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
+        )
 
 
 def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
+    if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+        return
+
     if obj_type == "file":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
             path = Path(
@@ -207,14 +230,16 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
         crate_logger.debug(
             f"Submitting {path / event['source']['name']=} onto the download queue."
         )
+
         download_queue.put(
-            [
+            DownloadQueueItem(
                 client.file(file_id=obj_id).get(
                     fields=["modified_at", "etag", "name", "path_collection"]
                 ),
                 path / event["source"]["name"],
                 client._oauth,
-            ]
+                event,
+            )
         )
     elif obj_type == "folder":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
@@ -250,11 +275,16 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
         notify_user_with_gui(
             "Box message: {} {}".format(box_message, file_path), crate_logger
         )
+        r_c.setex(
+            f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
+        )
 
 
 def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
+    if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+        return
     if obj_type == "file":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
             path = Path(
@@ -299,6 +329,12 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
             )
             r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
             r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
+            r_c.setex(
+                f"diy_crate:event_ids:{event.event_id}",
+                timedelta(days=32),
+                path.as_posix(),
+            )
+
         else:
             try:
                 version_info = redis_get(r_c, obj=file_obj)
@@ -315,7 +351,9 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
                         f"and the etag (local {version_info['etag']=}) "
                         f"(box {file_obj['etag']=}) is different"
                     )
-                    download_queue.put([file_obj, file_path, client._oauth])
+                    download_queue.put(
+                        DownloadQueueItem(file_obj, file_path, client._oauth, event)
+                    )
     elif obj_type == "folder":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
             path = Path(
@@ -358,11 +396,18 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
             )
             r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
             r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
+            r_c.setex(
+                f"diy_crate:event_ids:{event.event_id}",
+                timedelta(days=32),
+                path.as_posix(),
+            )
 
 
 def process_item_move_long_poll(event: Union[Event, Mapping]):
     obj_id = event["source"]["id"]
     obj_type = event["source"]["type"]
+    if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+        return
     if obj_type in ("file", "folder"):
         if r_c.exists(redis_key(obj_id)):
             item_info = json.loads(
@@ -432,6 +477,11 @@ def process_item_move_long_poll(event: Union[Event, Mapping]):
                 )
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    path.as_posix(),
+                )
 
 
 def get_sub_ids(box_id):
@@ -457,32 +507,131 @@ def get_sub_ids(box_id):
 BOX_EVENT_IGNORED_TYPES = ["ITEM_PREVIEW"]
 
 
+class CustomBoxEvents(Events):
+    @api_call
+    def generate_events_with_long_polling(
+        self, stream_position=None, stream_type=UserEventsStreamType.ALL
+    ):
+        """
+        Subscribe to events from the given stream position.
+
+        :param stream_position:
+            The location in the stream from which to start getting events.
+            0 is the beginning of time. 'now' will
+            return no events and just current stream position.
+        :type stream_position:
+            `unicode`
+        :param stream_type:
+            (optional) Which type of events to return.
+            Defaults to `UserEventsStreamType.ALL`.
+
+            NOTE: Currently, the Box API requires this to be one of the user
+            events stream types. The request will fail if an enterprise events
+            stream type is passed.
+        :type stream_type:
+            :enum:`UserEventsStreamType`
+        :returns:
+            Events corresponding to changes on Box in realtime, as they come in.
+        :rtype:
+            `generator` of :class:`Event`
+        """
+        event_ids = LRUCache()
+        stream_position = (
+            stream_position
+            if stream_position is not None
+            else self.get_latest_stream_position(stream_type=stream_type)
+        )
+        while True:
+            options = self.get_long_poll_options(stream_type=stream_type)
+            while True:
+                try:
+                    long_poll_response = self.long_poll(options, stream_position)
+                except Timeout:
+                    break
+                else:
+                    message = long_poll_response.json()["message"]
+                    if message == "new_change":
+                        next_stream_position = stream_position
+                        for event, next_stream_position in self._get_all_events_since(
+                            stream_position, stream_type=stream_type
+                        ):
+                            try:
+                                event_ids.get(event["event_id"])
+                            except KeyError:
+                                yield event, next_stream_position
+                                event_ids.set(event["event_id"])
+                        stream_position = next_stream_position
+                        break
+                    elif message == "reconnect":
+                        continue
+                    else:
+                        break
+
+
+class CustomBoxClient(Client):
+    def events(self):
+        """
+        Get an events object that can get the latest events from Box
+        or set up a long polling event subscription.
+        """
+        return CustomBoxEvents(self._session)
+
+
 def long_poll_event_listener(file_event_handler):
     """
     Receive and process remote cloud item events in real-time
     :return:
     """
     handler = file_event_handler
-    client = Client(oauth=handler.oauth)
+    client = CustomBoxClient(oauth=handler.oauth)
     long_poll_streamer = client.events()
 
     while True:
-        crate_logger.debug("About to get latest stream position.")
         try:
-            stream_position = long_poll_streamer.get_latest_stream_position()
+            next_streamed_position = r_c.get("diy_crate.box.next_stream_position")
+            if next_streamed_position:
+                stream_position = str(
+                    next_streamed_position, encoding="utf-8", errors="strict"
+                )
+                crate_logger.debug(
+                    f"Using cached latest stream position: {str(stream_position)=}"
+                )
+
+            else:
+                crate_logger.debug("About to get latest stream position.")
+                stream_position = long_poll_streamer.get_latest_stream_position()
+                crate_logger.debug(
+                    f"Using as latest stream position: {str(stream_position)=}"
+                )
+                r_c.setex(
+                    "diy_crate.box.next_stream_position",
+                    timedelta(days=32),
+                    stream_position,
+                )
             event_stream: Generator[
                 Union[Mapping, Event], None, None
             ] = long_poll_streamer.generate_events_with_long_polling(stream_position)
-            for event in event_stream:
+            for event, next_stream_position in event_stream:
                 if event.get("message", "").lower() == "reconnect":
                     break
                 if event.event_type in BOX_EVENT_IGNORED_TYPES:
                     continue
+                if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+                    continue
                 event_message = (
-                    f"{str(event)=} happened! {event.event_type=} {event.created_at=}"
+                    f"{str(event)=} happened! {event.event_type=} "
+                    f"{event.created_at=}, {event.event_id=}"
                 )
                 crate_logger.debug(event_message)
                 process_long_poll_event(client, event)
+                crate_logger.debug(
+                    f"Will set diy_crate.box.next_stream_position to {next_stream_position=}"
+                )
+                r_c.setex(
+                    "diy_crate.box.next_stream_position",
+                    timedelta(days=32),
+                    str(next_stream_position),
+                )
         except (exception.BoxAPIException, AttributeError):
             crate_logger.warning("Box or AttributeError occurred.", exc_info=True)
         except Exception:

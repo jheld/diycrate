@@ -17,7 +17,7 @@ from boxsdk.object.folder import Folder
 from dateutil.parser import parse
 
 from .file_operations import wm, BOX_DIR, path_time_recurse_func
-from .item_queue_io import download_queue, upload_queue
+from .item_queue_io import download_queue, upload_queue, DownloadQueueItem
 from .cache_utils import (
     redis_key,
     r_c,
@@ -391,7 +391,11 @@ def oauth_setup_within_directory_walk(oauth):
 def kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path):
     try:
         file_obj = box_item
-        download_queue.put((file_obj, os.path.join(path, box_item["name"]), oauth_obj))
+        download_queue.put(
+            DownloadQueueItem(
+                file_obj, os.path.join(path, box_item["name"]), oauth_obj, None
+            )
+        )
     except BoxAPIException as e:
         crate_logger.debug("Error occurred", exc_info=True)
         if e.status == 404:
