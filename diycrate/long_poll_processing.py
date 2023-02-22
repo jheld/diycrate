@@ -306,7 +306,7 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
         if (
             src_file_path
             and src_file_path.exists()
-            and not src_file_path.samefile(file_path)
+            and (not file_path.exists() or not src_file_path.samefile(file_path))
         ):
             version_info = redis_get(r_c, obj=file_obj)
             os.rename(src_file_path, file_path)
