@@ -32,7 +32,7 @@ def redis_set(
     last_modified_time: float,
     box_dir_path: PathLike,
     fresh_download: bool = False,
-    folder: str = None,
+    folder: Union[str, Path] = None,
     sub_ids: Optional[List[str]] = None,
     parent_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -52,7 +52,10 @@ def redis_set(
     if "etag" not in cloud_item:
         cloud_item = cloud_item.get(fields=["etag", "path_collection", "name"])
     if folder:
-        path = Path(folder)
+        if isinstance(folder, Path):
+            path = folder
+        else:
+            path = Path(folder)
     elif int(cloud_item["path_collection"]["total_count"]) > 1:
         path = Path(
             os.path.sep.join(

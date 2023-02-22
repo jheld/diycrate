@@ -9,6 +9,7 @@ from functools import partial
 from pathlib import Path
 from typing import Generator, Union, Mapping
 
+import boxsdk.object.file
 import dateutil
 from boxsdk import Client, exception
 from boxsdk.object.event import Event
@@ -48,6 +49,8 @@ BOX_DIR = Path(conf_obj["box"]["directory"]).expanduser().resolve()
 def process_long_poll_event(client: Client, event: Union[Event, Mapping]):
     if event["event_type"] == "ITEM_CREATE":
         process_item_create_long_poll(client, event)
+    if event["event_type"] == "ITEM_COPY":
+        process_item_copy_long_poll(client, event)
     if event["event_type"] == "ITEM_MOVE":
         process_item_move_long_poll(event)
     if event["event_type"] == "ITEM_RENAME":
@@ -82,46 +85,179 @@ def process_item_create_long_poll(client: Client, event: Union[Event, Mapping]):
     if obj_type == "folder":
         if not file_path.is_dir():
             os.makedirs(file_path)
-        box_item = client.folder(folder_id=obj_id).get(
-            fields=["id", "modified_at", "etag", "name"]
-        )
-        redis_set(
-            r_c,
-            box_item,
-            datetime.fromtimestamp(os.path.getmtime(file_path))
-            .astimezone(dateutil.tz.tzutc())
-            .timestamp(),
-            BOX_DIR,
-            True,
-            path,
-        )
-        time_data_map = {
-            Path(file_path)
-            .resolve()
-            .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
-            .astimezone(dateutil.tz.tzutc())
-            .timestamp()
-        }
-        for mkey, mvalue in time_data_map.items():
-            r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
-        r_c.set(
-            local_or_box_file_m_time_key_func(path / box_item.name, True),
-            parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
-        )
-        r_c.setex(
-            f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
-        )
+        try:
+            box_item = client.folder(folder_id=obj_id).get(
+                fields=["id", "modified_at", "etag", "name"]
+            )
+            redis_set(
+                r_c,
+                box_item,
+                datetime.fromtimestamp(os.path.getmtime(file_path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp(),
+                BOX_DIR,
+                True,
+                path,
+            )
+            time_data_map = {
+                Path(file_path)
+                .resolve()
+                .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp()
+            }
+            for mkey, mvalue in time_data_map.items():
+                r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+            r_c.set(
+                local_or_box_file_m_time_key_func(path / box_item.name, True),
+                parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+            )
+            r_c.setex(
+                f"diy_crate:event_ids:{event.event_id}",
+                timedelta(days=32),
+                path.as_posix(),
+            )
+        except boxsdk.exception.BoxAPIException as box_exc:
+            if box_exc.status == 404 and box_exc.code == "trashed":
+                crate_logger.debug(
+                    f"Object {obj_id=} was previously deleted from Box. "
+                    f"{path / event['source']['name']=}"
+                )
+                r_c.delete(redis_key(obj_id))
+                r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    path.as_posix(),
+                )
+            else:
+                raise
 
     elif obj_type == "file":
         if not file_path.is_file():
-            download_queue.put(
-                DownloadQueueItem(
-                    client.file(file_id=obj_id).get(),
-                    path / event["source"]["name"],
-                    client._oauth,
-                    event,
+            try:
+                download_queue.put(
+                    DownloadQueueItem(
+                        client.file(file_id=obj_id).get(),
+                        path / event["source"]["name"],
+                        client._oauth,
+                        event,
+                    )
                 )
+            except boxsdk.exception.BoxAPIException as box_exc:
+                if box_exc.status == 404 and box_exc.code == "trashed":
+                    crate_logger.debug(
+                        f"Object {obj_id=} was previously deleted from Box. "
+                        f"{path / event['source']['name']=}"
+                    )
+                    r_c.delete(redis_key(obj_id))
+                    r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                    r_c.setex(
+                        f"diy_crate:event_ids:{event.event_id}",
+                        timedelta(days=32),
+                        path.as_posix(),
+                    )
+                else:
+                    raise
+
+
+def process_item_copy_long_poll(client: Client, event: Union[Event, Mapping]):
+    obj_id = event["source"]["id"]
+    obj_type = event["source"]["type"]
+    if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+        return
+
+    if int(event["source"]["path_collection"]["total_count"]) > 1:
+        path = Path(
+            *list(
+                folder["name"]
+                for folder in event["source"]["path_collection"]["entries"][1:]
             )
+        )
+    else:
+        path = Path()
+    path = BOX_DIR / path
+    if not path.is_dir():
+        os.makedirs(path)
+    file_path = path / event["source"]["name"]
+    if obj_type == "folder":
+        if not file_path.is_dir():
+            os.makedirs(file_path)
+        try:
+            box_item = client.folder(folder_id=obj_id).get(
+                fields=["id", "modified_at", "etag", "name"]
+            )
+            redis_set(
+                r_c,
+                box_item,
+                datetime.fromtimestamp(os.path.getmtime(file_path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp(),
+                BOX_DIR,
+                True,
+                path,
+            )
+            time_data_map = {
+                Path(file_path)
+                .resolve()
+                .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp()
+            }
+            for mkey, mvalue in time_data_map.items():
+                r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+            r_c.set(
+                local_or_box_file_m_time_key_func(path / box_item.name, True),
+                parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+            )
+            r_c.setex(
+                f"diy_crate:event_ids:{event.event_id}",
+                timedelta(days=32),
+                path.as_posix(),
+            )
+        except boxsdk.exception.BoxAPIException as box_exc:
+            if box_exc.status == 404 and box_exc.code == "trashed":
+                crate_logger.debug(
+                    f"Object {obj_id=} was previously deleted from Box. "
+                    f"{path / event['source']['name']=}"
+                )
+                r_c.delete(redis_key(obj_id))
+                r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    path.as_posix(),
+                )
+            else:
+                raise
+
+    elif obj_type == "file":
+        if not file_path.is_file():
+            try:
+                box_item = client.file(file_id=obj_id).get()
+                download_queue.put(
+                    DownloadQueueItem(
+                        box_item,
+                        path / event["source"]["name"],
+                        client._oauth,
+                        event,
+                    )
+                )
+            except boxsdk.exception.BoxAPIException as box_exc:
+                if box_exc.status == 404 and box_exc.code == "trashed":
+                    crate_logger.debug(
+                        f"Object {obj_id=} was previously deleted from Box. "
+                        f"{path / event['source']['name']=}"
+                    )
+                    r_c.delete(redis_key(obj_id))
+                    r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                    r_c.setex(
+                        f"diy_crate:event_ids:{event.event_id}",
+                        timedelta(days=32),
+                        path.as_posix(),
+                    )
+                else:
+                    raise
 
 
 def process_item_trash_long_poll(event: Union[Event, Mapping]):
@@ -230,17 +366,33 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
         crate_logger.debug(
             f"Submitting {path / event['source']['name']=} onto the download queue."
         )
-
-        download_queue.put(
-            DownloadQueueItem(
-                client.file(file_id=obj_id).get(
-                    fields=["modified_at", "etag", "name", "path_collection"]
-                ),
-                path / event["source"]["name"],
-                client._oauth,
-                event,
+        try:
+            box_file_for_download: boxsdk.object.file.File = client.file(
+                file_id=obj_id
+            ).get(fields=["modified_at", "etag", "name", "path_collection"])
+            download_queue.put(
+                DownloadQueueItem(
+                    box_file_for_download,
+                    path / event["source"]["name"],
+                    client._oauth,
+                    event,
+                )
             )
-        )
+        except boxsdk.exception.BoxAPIException as box_exc:
+            if box_exc.status == 404 and box_exc.code == "trashed":
+                crate_logger.debug(
+                    f"Object {obj_id=} was previously deleted from Box. "
+                    f"{path / event['source']['name']=}"
+                )
+                r_c.delete(redis_key(obj_id))
+                r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    path.as_posix(),
+                )
+            else:
+                raise
     elif obj_type == "folder":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
             path = Path(
@@ -258,19 +410,34 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
         box_message = "new version"
         if not file_path.exists():
             os.makedirs(file_path)
-            box_item = client.folder(folder_id=obj_id).get(
-                fields=["id", "name", "etag", "modified_at"]
-            )
-            redis_set(
-                r_c,
-                box_item,
-                datetime.fromtimestamp(os.path.getmtime(file_path))
-                .astimezone(dateutil.tz.tzutc())
-                .timestamp(),
-                BOX_DIR,
-                True,
-                path,
-            )
+            try:
+                box_item: boxsdk.exception.BoxAPIException = client.folder(
+                    folder_id=obj_id
+                ).get(fields=["id", "name", "etag", "modified_at"])
+                redis_set(
+                    r_c,
+                    box_item,
+                    datetime.fromtimestamp(os.path.getmtime(file_path))
+                    .astimezone(dateutil.tz.tzutc())
+                    .timestamp(),
+                    BOX_DIR,
+                    True,
+                    path,
+                )
+            except boxsdk.exception.BoxAPIException as box_exc:
+                if box_exc.status == 404 and box_exc.code == "trashed":
+                    crate_logger.debug(
+                        f"Object {obj_id=} was previously deleted from Box. {file_path=}"
+                    )
+                    r_c.setex(
+                        f"diy_crate:event_ids:{event.event_id}",
+                        timedelta(days=32),
+                        path.as_posix(),
+                    )
+                    r_c.delete(redis_key(obj_id))
+                    r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                else:
+                    raise
             box_message = "new folder"
         notify_user_with_gui(
             "Box message: {} {}".format(box_message, file_path), crate_logger
@@ -297,63 +464,85 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
             path = Path()
         path = BOX_DIR / path
         file_path = path / event["source"]["name"]
-        file_obj = client.file(file_id=obj_id).get()
-        src_file_path = (
-            None
-            if not r_c.exists(redis_key(obj_id))
-            else Path(redis_get(r_c, file_obj)["file_path"])
-        )
-        if (
-            src_file_path
-            and src_file_path.exists()
-            and (not file_path.exists() or not src_file_path.samefile(file_path))
-        ):
-            version_info = redis_get(r_c, obj=file_obj)
-            os.rename(src_file_path, file_path)
-            version_info["file_path"] = file_path.as_posix()
-            version_info["etag"] = file_obj["etag"]
-            r_c.set(redis_key(obj_id), json.dumps(version_info))
-            r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-            time_data_map = {
-                Path(file_path)
-                .resolve()
-                .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
-                .astimezone(dateutil.tz.tzutc())
-                .timestamp()
-            }
-            for mkey, mvalue in time_data_map.items():
-                r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
-            r_c.set(
-                local_or_box_file_m_time_key_func(path / file_obj.name, True),
-                parse(file_obj.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+        try:
+            file_obj = client.file(file_id=obj_id).get()
+            src_file_path = (
+                None
+                if not r_c.exists(redis_key(obj_id))
+                else Path(redis_get(r_c, file_obj)["file_path"])
             )
-            r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
-            r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
-            r_c.setex(
-                f"diy_crate:event_ids:{event.event_id}",
-                timedelta(days=32),
-                path.as_posix(),
-            )
-
-        else:
-            try:
+            if (
+                src_file_path
+                and src_file_path.exists()
+                and (not file_path.exists() or not src_file_path.samefile(file_path))
+            ):
                 version_info = redis_get(r_c, obj=file_obj)
-            except TypeError:
-                crate_logger.error(
-                    f"Key likely did not exist in the cache for file_obj id {file_obj.object_id=}",
-                    exc_info=True,
+                os.rename(src_file_path, file_path)
+                version_info["file_path"] = file_path.as_posix()
+                version_info["etag"] = file_obj["etag"]
+                r_c.set(redis_key(obj_id), json.dumps(version_info))
+                r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                time_data_map = {
+                    Path(file_path)
+                    .resolve()
+                    .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+                    .astimezone(dateutil.tz.tzutc())
+                    .timestamp()
+                }
+                for mkey, mvalue in time_data_map.items():
+                    r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+                r_c.set(
+                    local_or_box_file_m_time_key_func(path / file_obj.name, True),
+                    parse(file_obj.modified_at)
+                    .astimezone(dateutil.tz.tzutc())
+                    .timestamp(),
                 )
+                r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
+                r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    path.as_posix(),
+                )
+
             else:
-                if not file_path.exists() or file_obj["etag"] != version_info["etag"]:
-                    crate_logger.info(
-                        f"Downloading the version from box, "
-                        f"on a rename operation, "
-                        f"and the etag (local {version_info['etag']=}) "
-                        f"(box {file_obj['etag']=}) is different"
+                try:
+                    version_info = redis_get(r_c, obj=file_obj)
+                except TypeError:
+                    crate_logger.error(
+                        f"Key likely did not exist in the cache for file_obj id "
+                        f"{file_obj.object_id=}",
+                        exc_info=True,
                     )
-                    download_queue.put(
-                        DownloadQueueItem(file_obj, file_path, client._oauth, event)
-                    )
+                else:
+                    if (
+                        not file_path.exists()
+                        or file_obj["etag"] != version_info["etag"]
+                    ):
+                        crate_logger.info(
+                            f"Downloading the version from box, "
+                            f"on a rename operation, "
+                            f"and the etag (local {version_info['etag']=}) "
+                            f"(box {file_obj['etag']=}) is different"
+                        )
+                        download_queue.put(
+                            DownloadQueueItem(file_obj, file_path, client._oauth, event)
+                        )
+        except boxsdk.exception.BoxAPIException as box_exc:
+            if box_exc.status == 404 and box_exc.code == "trashed":
+                crate_logger.debug(
+                    f"Object {obj_id=} was previously deleted from Box. {file_path=}"
+                )
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    path.as_posix(),
+                )
+                r_c.delete(redis_key(obj_id))
+                r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+            else:
+                raise
+
     elif obj_type == "folder":
         if int(event["source"]["path_collection"]["total_count"]) > 1:
             path = Path(
@@ -366,41 +555,56 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
             path = Path()
         path = BOX_DIR / path
         file_path = path / event["source"]["name"]
-        folder_obj = client.folder(folder_id=obj_id).get()
-        src_file_path = (
-            None
-            if not r_c.exists(redis_key(obj_id))
-            else Path(redis_get(r_c, folder_obj)["file_path"])
-        )
-        if src_file_path and src_file_path.exists():
-            os.rename(src_file_path, file_path)
-            version_info = redis_get(r_c, obj=folder_obj)
-            version_info["file_path"] = file_path.as_posix()
-            version_info["etag"] = folder_obj["etag"]
-            r_c.set(redis_key(obj_id), json.dumps(version_info))
-            r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-            time_data_map = {
-                Path(file_path)
-                .resolve()
-                .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
-                .astimezone(dateutil.tz.tzutc())
-                .timestamp()
-            }
-            for mkey, mvalue in time_data_map.items():
-                r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
-            r_c.set(
-                local_or_box_file_m_time_key_func(path / folder_obj.name, True),
-                parse(folder_obj.modified_at)
-                .astimezone(dateutil.tz.tzutc())
-                .timestamp(),
+        try:
+            folder_obj = client.folder(folder_id=obj_id).get()
+            src_file_path = (
+                None
+                if not r_c.exists(redis_key(obj_id))
+                else Path(redis_get(r_c, folder_obj)["file_path"])
             )
-            r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
-            r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
-            r_c.setex(
-                f"diy_crate:event_ids:{event.event_id}",
-                timedelta(days=32),
-                path.as_posix(),
-            )
+            if src_file_path and src_file_path.exists():
+                os.rename(src_file_path, file_path)
+                version_info = redis_get(r_c, obj=folder_obj)
+                version_info["file_path"] = file_path.as_posix()
+                version_info["etag"] = folder_obj["etag"]
+                r_c.set(redis_key(obj_id), json.dumps(version_info))
+                r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                time_data_map = {
+                    Path(file_path)
+                    .resolve()
+                    .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+                    .astimezone(dateutil.tz.tzutc())
+                    .timestamp()
+                }
+                for mkey, mvalue in time_data_map.items():
+                    r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+                r_c.set(
+                    local_or_box_file_m_time_key_func(path / folder_obj.name, True),
+                    parse(folder_obj.modified_at)
+                    .astimezone(dateutil.tz.tzutc())
+                    .timestamp(),
+                )
+                r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
+                r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    path.as_posix(),
+                )
+        except boxsdk.exception.BoxAPIException as box_exc:
+            if box_exc.status == 404 and box_exc.code == "trashed":
+                crate_logger.debug(
+                    f"Object {obj_id=} was previously deleted from Box. {file_path=}"
+                )
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    path.as_posix(),
+                )
+                r_c.delete(redis_key(obj_id))
+                r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+            else:
+                raise
 
 
 def process_item_move_long_poll(event: Union[Event, Mapping]):
@@ -619,8 +823,8 @@ def long_poll_event_listener(file_event_handler):
                 if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
                     continue
                 event_message = (
-                    f"{str(event)=} happened! {event.event_type=} "
-                    f"{event.created_at=}, {event.event_id=}"
+                    f"{event=} happened! {event.event_type=} "
+                    f"{event.created_at=}, {event.event_id=}, {event['source']['name']}"
                 )
                 crate_logger.debug(event_message)
                 process_long_poll_event(client, event)

@@ -10,6 +10,7 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, Any, List, NamedTuple, Union, Tuple, Mapping
 
+import boxsdk.exception
 import dateutil
 from boxsdk import Client, OAuth2
 from boxsdk.exception import BoxAPIException
@@ -180,6 +181,11 @@ def download_queue_processor():
                     )
                 # no version, or diff version, or the file does not exist locally
                 if not info or info["etag"] != item["etag"] or not os.path.exists(path):
+                    if info:
+                        crate_logger.debug(
+                            f"Preprocessing logic before download attempt. "
+                            f"{path=} ETAG {info['etag']=} vs {item['etag']=}"
+                        )
                     try:
                         crate_logger.debug(f"attempt the download {path=}")
                         perform_download(item, path)
@@ -262,21 +268,29 @@ def perform_download(item: File, path, retry_limit=15):
             path_builder = BOX_DIR
             oauth = setup_remote_oauth(r_c, conf=conf_obj)
             client = Client(oauth)
-            for entry in (
-                client.file(item.object_id)
-                .get(fields=["path_collection"])
-                .path_collection["entries"]
-            ):
-                if entry.id == "0":
-                    continue
-                path_builder /= entry.name
-                folder_entry = client.folder(entry.id).get(fields=["modified_at"])
-                r_c.set(
-                    local_or_box_file_m_time_key_func(path_builder, True),
-                    parse(folder_entry.modified_at)
-                    .astimezone(dateutil.tz.tzutc())
-                    .timestamp(),
-                )
+            try:
+                box_file = client.file(item.object_id).get(fields=["path_collection"])
+                for entry in box_file.path_collection["entries"]:
+                    if entry.id == "0":
+                        continue
+                    path_builder /= entry.name
+                    folder_entry = client.folder(entry.id).get(fields=["modified_at"])
+                    r_c.set(
+                        local_or_box_file_m_time_key_func(path_builder, True),
+                        parse(folder_entry.modified_at)
+                        .astimezone(dateutil.tz.tzutc())
+                        .timestamp(),
+                    )
+            except boxsdk.exception.BoxAPIException as box_exc:
+                if box_exc.status == 404 and box_exc.code == "trashed":
+                    crate_logger.debug(
+                        f"Object {item.object_id=} was previously deleted from Box. "
+                        f"{(path / item.name)=}"
+                    )
+                    r_c.delete(redis_key(item.object_id))
+                    r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+                else:
+                    raise
             break
 
 
