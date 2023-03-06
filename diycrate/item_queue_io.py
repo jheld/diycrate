@@ -205,7 +205,7 @@ def download_queue_processor():
                 )
 
 
-def perform_download(item: File, path, retry_limit=15):
+def perform_download(item: File, path: Union[str, Path], retry_limit=15):
     if isinstance(path, str):
         path = Path(path)
     for i in range(retry_limit):
@@ -239,7 +239,9 @@ def perform_download(item: File, path, retry_limit=15):
                 crate_logger.info(f"Retry recovered, for path: {path}")
             # path_to_add = os.path.dirname(path)
             # wm.add_watch(path=path_to_add, mask=mask, rec=True, auto_add=True)
-            notify_user_with_gui(f"Downloaded: {path}")
+            notify_user_with_gui(
+                "Downloaded:", path.as_posix() if isinstance(path, Path) else path
+            )
             was_versioned = r_c.exists(redis_key(item.object_id))
             redis_set(
                 r_c,

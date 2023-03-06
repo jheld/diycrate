@@ -286,6 +286,7 @@ def process_item_trash_file(event: Union[Event, Mapping], obj_id):
     else:
         path = Path()
     path = BOX_DIR / path
+    file_path: Path
     if not item_info:
         file_path = path / event["source"]["name"]
     else:
@@ -296,7 +297,7 @@ def process_item_trash_file(event: Union[Event, Mapping], obj_id):
         r_c.delete(redis_key(obj_id))
         r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
     notify_user_with_gui(
-        "Box message: Deleted {}".format(file_path), crate_logger, expire_time=10000
+        "Box message: Deleted:", file_path.as_posix(), crate_logger, expire_time=10000
     )
     r_c.setex(
         f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
@@ -336,9 +337,9 @@ def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
                 sub_ids.remove(obj_id)
                 r_c.set(redis_key(parent_id), json.dumps(parent_folder))
             r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-        deletion_msg = f"Box message: Deleted {file_path}"
-        crate_logger.info(deletion_msg)
-        notify_user_with_gui(deletion_msg, crate_logger)
+        deletion_msg = ["Box message: Deleted:", file_path.as_posix()]
+        crate_logger.info(" ".join(deletion_msg))
+        notify_user_with_gui(*deletion_msg, crate_logger)
         r_c.setex(
             f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
         )
@@ -440,7 +441,7 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
                     raise
             box_message = "new folder"
         notify_user_with_gui(
-            "Box message: {} {}".format(box_message, file_path), crate_logger
+            f"Box message: {box_message}:", file_path.as_posix(), crate_logger
         )
         r_c.setex(
             f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
