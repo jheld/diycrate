@@ -825,7 +825,7 @@ def long_poll_event_listener(file_event_handler):
                     continue
                 event_message = (
                     f"{event=} happened! {event.event_type=} "
-                    f"{event.created_at=}, {event.event_id=}, {event['source']['name']}"
+                    f"{event.created_at=}, {event.event_id=}, {event['source'].get('name')}"
                 )
                 crate_logger.debug(event_message)
                 process_long_poll_event(client, event)
