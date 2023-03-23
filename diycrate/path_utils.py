@@ -7,7 +7,7 @@ from os import PathLike
 from pathlib import Path
 from typing import Union, Optional, Dict, List
 
-import dateutil
+from dateutil.tz import tzutc
 from bottle import Bottle
 from boxsdk import OAuth2
 from boxsdk.exception import BoxAPIException
@@ -134,14 +134,14 @@ def walk_and_notify_and_download_tree(
             kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path)
         r_c.set(
             local_or_box_file_m_time_key_func(path / box_item.name, True),
-            parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+            parse(box_item.modified_at).astimezone(tzutc()).timestamp(),
         )
     if not local_only:
         redis_set(
             cache_client=r_c,
             cloud_item=b_folder,
             last_modified_time=datetime.fromtimestamp(os.path.getmtime(path))
-            .astimezone(dateutil.tz.tzutc())
+            .astimezone(tzutc())
             .timestamp(),
             box_dir_path=BOX_DIR,
             fresh_download=not r_c.exists(redis_key(box_folder.object_id)),
@@ -210,9 +210,7 @@ def any_unresolved_modifications(
                 box_current_path_and_m_time = tuple(
                     [
                         (path.parent / b_folder.name).as_posix(),
-                        parse(b_folder_modified_at)
-                        .astimezone(dateutil.tz.tzutc())
-                        .timestamp(),
+                        parse(b_folder_modified_at).astimezone(tzutc()).timestamp(),
                     ]
                 )
                 differences_full = []
@@ -267,6 +265,7 @@ def any_unresolved_modifications(
                     float(r_c.get(k)),
                 )
                 for k in r_c.keys(local_or_box_file_m_time_key_func(path, False) + "*")
+                if r_c.get(k)
             ),
             key=lambda x: x[1],
         )
@@ -281,6 +280,7 @@ def any_unresolved_modifications(
                     float(r_c.get(k)),
                 )
                 for k in r_c.keys(local_or_box_file_m_time_key_func(path, True) + "*")
+                if r_c.get(k)
             ),
             key=lambda x: x[1],
         )
@@ -288,7 +288,7 @@ def any_unresolved_modifications(
         b_children = sorted(
             b_folder.get_items(fields=["name", "modified_at", "path_collection"]),
             key=lambda x: datetime.fromisoformat(x.modified_at)
-            .astimezone(dateutil.tz.tzutc())
+            .astimezone(tzutc())
             .timestamp(),
         )
         b_oldest_child: Optional[Union[Folder, File]] = (
@@ -298,7 +298,7 @@ def any_unresolved_modifications(
             crate_logger.debug([item.name for item in b_children])
         b_oldest_child_modified_at = (
             datetime.fromisoformat(b_oldest_child.modified_at)
-            .astimezone(dateutil.tz.tzutc())
+            .astimezone(tzutc())
             .timestamp()
             if b_oldest_child
             else None
@@ -426,7 +426,7 @@ def kick_off_sub_directory_box_folder_download_walk(
                 cache_client=r_c,
                 cloud_item=box_item,
                 last_modified_time=datetime.fromtimestamp(os.path.getmtime(local_path))
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp(),
                 box_dir_path=BOX_DIR,
                 fresh_download=fresh_download,
@@ -486,7 +486,7 @@ def local_files_walk_pre_process(
             crate_logger.info(f"upload, {local_path}, {local_file}")
             m_timestamp = (
                 datetime.fromtimestamp(os.path.getmtime(local_path))
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp()
             )
 

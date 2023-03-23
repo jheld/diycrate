@@ -9,14 +9,17 @@ from functools import partial
 from pathlib import Path
 from typing import Generator, Union, Mapping
 
-import boxsdk.object.file
-import dateutil
+import boxsdk
+from boxsdk.object.file import File
+from boxsdk.object.folder import Folder
 from boxsdk import Client, exception
 from boxsdk.object.event import Event
 from boxsdk.object.events import UserEventsStreamType, Events
+from boxsdk.session.box_response import BoxResponse
 from boxsdk.util.api_call_decorator import api_call
 from boxsdk.util.lru_cache import LRUCache
 from dateutil.parser import parse
+from dateutil.tz import tzutc
 from requests import Timeout
 from send2trash import send2trash
 
@@ -93,7 +96,7 @@ def process_item_create_long_poll(client: Client, event: Union[Event, Mapping]):
                 r_c,
                 box_item,
                 datetime.fromtimestamp(os.path.getmtime(file_path))
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp(),
                 BOX_DIR,
                 True,
@@ -103,14 +106,14 @@ def process_item_create_long_poll(client: Client, event: Union[Event, Mapping]):
                 Path(file_path)
                 .resolve()
                 .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp()
             }
             for mkey, mvalue in time_data_map.items():
                 r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
             r_c.set(
                 local_or_box_file_m_time_key_func(path / box_item.name, True),
-                parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+                parse(box_item.modified_at).astimezone(tzutc()).timestamp(),
             )
             r_c.setex(
                 f"diy_crate:event_ids:{event.event_id}",
@@ -191,7 +194,7 @@ def process_item_copy_long_poll(client: Client, event: Union[Event, Mapping]):
                 r_c,
                 box_item,
                 datetime.fromtimestamp(os.path.getmtime(file_path))
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp(),
                 BOX_DIR,
                 True,
@@ -201,14 +204,14 @@ def process_item_copy_long_poll(client: Client, event: Union[Event, Mapping]):
                 Path(file_path)
                 .resolve()
                 .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp()
             }
             for mkey, mvalue in time_data_map.items():
                 r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
             r_c.set(
                 local_or_box_file_m_time_key_func(path / box_item.name, True),
-                parse(box_item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+                parse(box_item.modified_at).astimezone(tzutc()).timestamp(),
             )
             r_c.setex(
                 f"diy_crate:event_ids:{event.event_id}",
@@ -297,7 +300,10 @@ def process_item_trash_file(event: Union[Event, Mapping], obj_id):
         r_c.delete(redis_key(obj_id))
         r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
     notify_user_with_gui(
-        "Box message: Deleted:", file_path.as_posix(), crate_logger, expire_time=10000
+        "Box message: Deleted:",
+        file_path.as_posix(),
+        crate_logger=crate_logger,
+        expire_time=10000,
     )
     r_c.setex(
         f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
@@ -339,7 +345,7 @@ def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
             r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
         deletion_msg = ["Box message: Deleted:", file_path.as_posix()]
         crate_logger.info(" ".join(deletion_msg))
-        notify_user_with_gui(*deletion_msg, crate_logger)
+        notify_user_with_gui(*deletion_msg, crate_logger=crate_logger)
         r_c.setex(
             f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
         )
@@ -368,9 +374,9 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
             f"Submitting {path / event['source']['name']=} onto the download queue."
         )
         try:
-            box_file_for_download: boxsdk.object.file.File = client.file(
-                file_id=obj_id
-            ).get(fields=["modified_at", "etag", "name", "path_collection"])
+            box_file_for_download: File = client.file(file_id=obj_id).get(
+                fields=["modified_at", "etag", "name", "path_collection"]
+            )
             download_queue.put(
                 DownloadQueueItem(
                     box_file_for_download,
@@ -412,14 +418,14 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
         if not file_path.exists():
             os.makedirs(file_path)
             try:
-                box_item: boxsdk.exception.BoxAPIException = client.folder(
-                    folder_id=obj_id
-                ).get(fields=["id", "name", "etag", "modified_at"])
+                box_item: Folder = client.folder(folder_id=obj_id).get(
+                    fields=["id", "name", "etag", "modified_at"]
+                )
                 redis_set(
                     r_c,
                     box_item,
                     datetime.fromtimestamp(os.path.getmtime(file_path))
-                    .astimezone(dateutil.tz.tzutc())
+                    .astimezone(tzutc())
                     .timestamp(),
                     BOX_DIR,
                     True,
@@ -441,7 +447,9 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
                     raise
             box_message = "new folder"
         notify_user_with_gui(
-            f"Box message: {box_message}:", file_path.as_posix(), crate_logger
+            f"Box message: {box_message}:",
+            file_path.as_posix(),
+            crate_logger=crate_logger,
         )
         r_c.setex(
             f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
@@ -487,16 +495,14 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
                     Path(file_path)
                     .resolve()
                     .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
-                    .astimezone(dateutil.tz.tzutc())
+                    .astimezone(tzutc())
                     .timestamp()
                 }
                 for mkey, mvalue in time_data_map.items():
                     r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
                 r_c.set(
                     local_or_box_file_m_time_key_func(path / file_obj.name, True),
-                    parse(file_obj.modified_at)
-                    .astimezone(dateutil.tz.tzutc())
-                    .timestamp(),
+                    parse(file_obj.modified_at).astimezone(tzutc()).timestamp(),
                 )
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
@@ -574,16 +580,14 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
                     Path(file_path)
                     .resolve()
                     .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
-                    .astimezone(dateutil.tz.tzutc())
+                    .astimezone(tzutc())
                     .timestamp()
                 }
                 for mkey, mvalue in time_data_map.items():
                     r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
                 r_c.set(
                     local_or_box_file_m_time_key_func(path / folder_obj.name, True),
-                    parse(folder_obj.modified_at)
-                    .astimezone(dateutil.tz.tzutc())
-                    .timestamp(),
+                    parse(folder_obj.modified_at).astimezone(tzutc()).timestamp(),
                 )
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
@@ -646,7 +650,7 @@ def process_item_move_long_poll(event: Union[Event, Mapping]):
                                     errors="strict",
                                 )
                             )
-                            orig_len = len(src_file_path.split(os.path.sep))
+                            orig_len = len(src_file_path.as_posix().split(os.path.sep))
                             tail = os.path.sep.join(
                                 sub_item_info["file_path"].split(os.path.sep)[orig_len:]
                             )
@@ -662,14 +666,14 @@ def process_item_move_long_poll(event: Union[Event, Mapping]):
                 shutil.move(src_file_path, file_path)
                 for item in to_set:
                     item()
-                item_info["file_path"] = file_path
+                item_info["file_path"] = file_path.as_posix()
                 item_info["etag"] = event["source"]["etag"]
                 r_c.set(redis_key(obj_id), json.dumps(item_info))
                 time_data_map = {
                     Path(file_path)
                     .resolve()
                     .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
-                    .astimezone(dateutil.tz.tzutc())
+                    .astimezone(tzutc())
                     .timestamp()
                 }
                 for mkey, mvalue in time_data_map.items():
@@ -677,7 +681,7 @@ def process_item_move_long_poll(event: Union[Event, Mapping]):
                 r_c.set(
                     local_or_box_file_m_time_key_func(file_path, True),
                     parse(event["source"]["modified_at"])
-                    .astimezone(dateutil.tz.tzutc())
+                    .astimezone(tzutc())
                     .timestamp(),
                 )
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
@@ -750,7 +754,9 @@ class CustomBoxEvents(Events):
             options = self.get_long_poll_options(stream_type=stream_type)
             while True:
                 try:
-                    long_poll_response = self.long_poll(options, stream_position)
+                    long_poll_response: BoxResponse = self.long_poll(  # noqa
+                        options, stream_position
+                    )
                 except Timeout:
                     break
                 else:
@@ -825,7 +831,8 @@ def long_poll_event_listener(file_event_handler):
                     continue
                 event_message = (
                     f"{event=} happened! {event.event_type=} "
-                    f"{event.created_at=}, {event.event_id=}, {event['source'].get('name')}"
+                    f"{event.created_at=}, {event.event_id=}, "
+                    f"{getattr(event['source'], 'name', None)=}"
                 )
                 crate_logger.debug(event_message)
                 process_long_poll_event(client, event)
