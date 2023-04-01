@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Callable, Any, List, NamedTuple, Union, Tuple, Mapping
+from typing import Callable, Any, List, NamedTuple, Union, Mapping
 
 import boxsdk.exception
 import dateutil
@@ -43,42 +43,58 @@ def upload_queue_processor():
     :return:
     """
     while True:
-        if upload_queue.not_empty:
-            callable_up = upload_queue.get()  # blocks
-            # TODO: pass in the actual item being updated/uploaded,
-            #  so we can do more intelligent retry mechanisms
-            was_list = isinstance(callable_up, (list, tuple))
-            last_modified_time = oauth = None
-            if was_list:
-                last_modified_time, callable_up, oauth = callable_up
-            args = callable_up.args if isinstance(callable_up, partial) else None
-            num_retries = 15
-            perform_upload(
-                args,
-                callable_up,
-                last_modified_time,
-                num_retries,
-                oauth,
-                was_list,
-                retry_limit=num_retries,
-            )
-            upload_queue.task_done()
+        callable_up = upload_queue.get()  # blocks
+        # TODO: pass in the actual item being updated/uploaded,
+        #  so we can do more intelligent retry mechanisms
+        was_list = isinstance(callable_up, (list, tuple))
+        last_modified_time = oauth = explicit_file_path = None
+        if was_list:
+            original_callable_up = callable_up
+            last_modified_time, callable_up, oauth = original_callable_up[:3]
+            if len(original_callable_up) > 3:
+                explicit_file_path = original_callable_up[3]
+            elif isinstance(callable_up, partial):
+                explicit_file_path = callable_up.args[0]
+        args = callable_up.args if isinstance(callable_up, partial) else None
+        num_retries = 15
+        perform_upload(
+            args,
+            callable_up,
+            last_modified_time,
+            num_retries,
+            oauth,
+            explicit_file_path,
+            was_list,
+            retry_limit=num_retries,
+        )
+        upload_queue.task_done()
 
 
 def perform_upload(
-    args, callable_up, last_modified_time, num_retries, oauth, was_list, retry_limit=15
+    args,
+    callable_up,
+    last_modified_time,
+    num_retries,
+    oauth,
+    explicit_file_path,
+    was_list,
+    retry_limit=15,
 ):
     for x in range(retry_limit):
         try:
-            crate_logger.debug(f"Attempt upload{' ' + args[0] if was_list else ''}")
+            crate_logger.debug(
+                f"Attempt upload{' ' + explicit_file_path if was_list else ''}"
+            )
             ret_val = callable_up()
-            crate_logger.info(f"Completed upload{' ' + args[0] if was_list else ''}")
+            crate_logger.info(
+                f"Completed upload{' ' + explicit_file_path if was_list else ''}"
+            )
             if was_list:
-                path_name = args[0]
+                path_name = explicit_file_path
                 item = ret_val  # is the new/updated item
                 if isinstance(item, File):
                     client = Client(oauth)
-                    file_obj = client.file(file_id=item.object_id).get()
+                    file_obj: File = client.file(file_id=item.object_id).get()
                     redis_set(r_c, file_obj, last_modified_time, box_dir_path=BOX_DIR)
                     r_c.set(
                         local_or_box_file_m_time_key_func(path_name, False),
@@ -303,7 +319,14 @@ class DownloadQueueItem(NamedTuple):
     event: Union[Event, Mapping, None]
 
 
-UploadQueueItem = Union[Callable[..., Any], Tuple[float, Callable[..., Any], OAuth2]]
+class UploadQueueItemReal(NamedTuple):
+    timestamp: float
+    callable_up: Callable[..., Any]
+    oauth: OAuth2
+    explicit_file_path: Union[Path, str, None]
+
+
+UploadQueueItem = Union[Callable[..., Any], UploadQueueItemReal]
 
 download_queue: "queue.Queue[DownloadQueueItem]" = queue.Queue()
 upload_queue: "queue.Queue[UploadQueueItem]" = queue.Queue()

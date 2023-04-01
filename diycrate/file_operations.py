@@ -295,6 +295,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         box_uploader.start,
                     ),
                     self.oauth,
+                    file_path.as_posix(),
                 ]
             )
         elif is_dir and not did_find_the_folder:
@@ -395,6 +396,7 @@ class EventHandler(pyinotify.ProcessEvent):
                                         cur_file.update_contents, file_path.as_posix()
                                     ),
                                     self.oauth,
+                                    file_path.as_posix(),
                                 ]
                             )
                         else:
@@ -452,6 +454,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         cur_box_folder.upload, file_path.as_posix(), file_path.name
                     ),
                     self.oauth,
+                    file_path.as_posix(),
                 ]
             )
         if is_dir and not did_find_the_folder:
@@ -566,6 +569,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         os.path.basename(event.pathname),
                     ),
                     self.oauth,
+                    event.pathname,
                 ]
             )
         elif is_dir and not did_find_the_folder:
@@ -706,6 +710,7 @@ class EventHandler(pyinotify.ProcessEvent):
                                         cur_entry.update_contents, dest_event.pathname
                                     ),
                                     self.oauth,
+                                    dest_event.pathname,
                                 ]
                             )
                             self.upload_queue.put(partial(src_file.delete))
@@ -775,6 +780,7 @@ class EventHandler(pyinotify.ProcessEvent):
                                         cur_entry.update_contents, dest_event.pathname
                                     ),
                                     self.oauth,
+                                    dest_event.pathname,
                                 ]
                             )
                             break
@@ -813,6 +819,7 @@ class EventHandler(pyinotify.ProcessEvent):
                                 os.path.basename(dest_event.pathname),
                             ),
                             self.oauth,
+                            dest_event.pathname,
                         ]
                     )
                 elif is_dir and not did_find_src_folder:

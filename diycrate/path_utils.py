@@ -17,7 +17,12 @@ from boxsdk.object.folder import Folder
 from dateutil.parser import parse
 
 from .file_operations import wm, BOX_DIR, path_time_recurse_func
-from .item_queue_io import download_queue, upload_queue, DownloadQueueItem
+from .item_queue_io import (
+    download_queue,
+    upload_queue,
+    DownloadQueueItem,
+    UploadQueueItem,
+)
 from .cache_utils import (
     redis_key,
     r_c,
@@ -491,10 +496,11 @@ def local_files_walk_pre_process(
             )
 
             upload_queue.put(
-                (
+                UploadQueueItem(
                     m_timestamp,
                     partial(cur_box_folder.upload, local_path, local_file),
                     oauth_obj,
+                    local_path,
                 )
             )
     end_t = time.monotonic()
