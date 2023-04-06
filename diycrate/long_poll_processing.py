@@ -799,6 +799,7 @@ def long_poll_event_listener(file_event_handler):
 
     while True:
         try:
+            crate_logger.info("Determining stream position.")
             next_streamed_position = r_c.get("diy_crate.box.next_stream_position")
             if next_streamed_position:
                 stream_position = str(
@@ -809,7 +810,7 @@ def long_poll_event_listener(file_event_handler):
                 )
 
             else:
-                crate_logger.debug("About to get latest stream position.")
+                crate_logger.info("About to get latest stream position.")
                 stream_position = long_poll_streamer.get_latest_stream_position()
                 crate_logger.debug(
                     f"Using as latest stream position: {str(stream_position)=}"
