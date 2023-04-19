@@ -703,7 +703,9 @@ def get_sub_ids(box_id):
     item_info = json.loads(
         str(r_c.get(redis_key(box_id)), encoding="utf-8", errors="strict")
     )
-    for sub_id in item_info["sub_ids"]:
+    sub_ids = item_info.get("sub_ids")
+    sub_ids = sub_ids if sub_ids is not None else []
+    for sub_id in sub_ids:
         sub_item_info = json.loads(
             str(r_c.get(redis_key(sub_id)), encoding="utf-8", errors="strict")
         )
