@@ -5,6 +5,7 @@ import queue
 import threading
 import logging
 import time
+from datetime import timedelta
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -316,6 +317,12 @@ class EventHandler(pyinotify.ProcessEvent):
     def process_modify_event(self, event: pyinotify.Event, operation: str):
         file_path = Path(event.pathname)
         crate_logger.debug(f"{operation}...: {file_path.as_posix()}")
+        if r_c.exists(f"{event.pathname}:created:enqueue"):
+            crate_logger.info(
+                f"Skipping {operation} logic because cache key "
+                f"`created:enqueue` for {file_path.as_posix()}"
+            )
+            return
         try:
             r_c.set(
                 local_or_box_file_m_time_key_func(file_path.as_posix(), False),
@@ -562,6 +569,9 @@ class EventHandler(pyinotify.ProcessEvent):
         if is_file and not did_find_the_file:
             crate_logger.debug("Upload the file: {}".format(event.pathname))
             last_modified_time = os.path.getctime(event.pathname)
+            r_c.set(
+                f"{event.pathname}:created:enqueue", value=1, ex=timedelta(minutes=1)
+            )
             self.upload_queue.put(
                 UploadQueueItemReal(
                     datetime.fromtimestamp(last_modified_time)
