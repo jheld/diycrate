@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Union, List, Dict
+from typing import Union, List, Dict, Optional
 
 import boxsdk.object.file
 import dateutil
@@ -52,11 +52,13 @@ conf_obj.read(cloud_credentials_file_path)
 BOX_DIR = Path(conf_obj["box"]["directory"]).expanduser().resolve()
 
 
+# noinspection PyUnresolvedReferences
 class EventHandler(pyinotify.ProcessEvent):
     """
     EventHandler to manage cloud storage synchronization.
     """
 
+    # noinspection SpellCheckingInspection
     def my_init(self, **kargs):
         """
         Extends the super to add cloud storage state.
@@ -115,7 +117,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 self.process_event(*operation)
 
     @staticmethod
-    def get_folder(client, folder_id: str) -> Folder:
+    def get_folder(client: Client, folder_id: str) -> Folder:
         """
 
         :param client:
@@ -163,7 +165,12 @@ class EventHandler(pyinotify.ProcessEvent):
         return folders_to_traverse
 
     @staticmethod
-    def traverse_path(client, event, cur_box_folder, folders_to_traverse):
+    def traverse_path(
+        client: Client,
+        event: pyinotify.Event,
+        cur_box_folder: Folder,
+        folders_to_traverse: List["str"],
+    ):
         """
 
         :param cur_box_folder:
@@ -205,7 +212,7 @@ class EventHandler(pyinotify.ProcessEvent):
                     )
         return cur_box_folder
 
-    def process_event(self, event, operation):
+    def process_event(self, event: pyinotify.Event, operation: str):
         """
         Wrapper to process the given event on the operation.
         :param event:
@@ -233,7 +240,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 exc_info=True,
             )
 
-    def process_real_close_event(self, event):
+    def process_real_close_event(self, event: pyinotify.Event):
         file_path = Path(event.pathname)
         crate_logger.debug(f"Real close...: {file_path.as_posix()}")
         folders_to_traverse = self.folders_to_traverse(file_path.parent.as_posix())
@@ -306,12 +313,8 @@ class EventHandler(pyinotify.ProcessEvent):
                 )
             )
 
-    def process_modify_event(self, event, operation):
+    def process_modify_event(self, event: pyinotify.Event, operation: str):
         file_path = Path(event.pathname)
-        # if file_path.name.startswith(".goutputstream"):
-        #     return
-        # if file_path.name.endswith(".tmp"):
-        #     return
         crate_logger.debug(f"{operation}...: {file_path.as_posix()}")
         try:
             r_c.set(
@@ -323,7 +326,6 @@ class EventHandler(pyinotify.ProcessEvent):
         except FileNotFoundError:
             pass
         folders_to_traverse = self.folders_to_traverse(file_path.parent.as_posix())
-        crate_logger.debug(folders_to_traverse)
         client = Client(self.oauth)
         cur_box_folder = None
         folder_id = "0"
@@ -468,7 +470,7 @@ class EventHandler(pyinotify.ProcessEvent):
             )
             # wm.add_watch(file_path.as_posix(), rec=True, mask=mask, auto_add=True)
 
-    def process_create_event(self, event):
+    def process_create_event(self, event: pyinotify.Event):
         crate_logger.debug("Creating: {}".format(event.pathname))
         folders_to_traverse = self.folders_to_traverse(event.path)
         crate_logger.debug(folders_to_traverse)
@@ -586,7 +588,7 @@ class EventHandler(pyinotify.ProcessEvent):
             )
             # wm.add_watch(event.pathname, rec=True, mask=mask, auto_add=True)
 
-    def process_move_event(self, event):
+    def process_move_event(self, event: pyinotify.Event):
         crate_logger.debug("Doing a move on: {}".format(event))
         src_event, dest_event = event
         folders_to_traverse = self.folders_to_traverse(dest_event.path)
@@ -840,7 +842,7 @@ class EventHandler(pyinotify.ProcessEvent):
                     )
                     # wm.add_watch(dest_event.pathname, rec=True, mask=mask, auto_add=True)
 
-    def process_delete_event(self, event):
+    def process_delete_event(self, event: pyinotify.Event):
         crate_logger.debug(f"Doing a delete on {event=}")
         folders_to_traverse = self.folders_to_traverse(event.path)
         crate_logger.debug(folders_to_traverse)
@@ -908,7 +910,8 @@ class EventHandler(pyinotify.ProcessEvent):
                     )  # just wrote if, assuming create event didn't run
                 break
 
-    def process_IN_CREATE(self, event):
+    # noinspection PyPep8Naming
+    def process_IN_CREATE(self, event: pyinotify.Event):
         """
         Overrides the super.
         :param event:
@@ -919,7 +922,8 @@ class EventHandler(pyinotify.ProcessEvent):
         ):  # avoid propagating lock files
             self.incoming_operations.put([event, "create"])
 
-    def process_IN_DELETE(self, event):
+    # noinspection PyPep8Naming
+    def process_IN_DELETE(self, event: pyinotify.Event):
         """
         Overrides the super.
         :param event:
@@ -928,7 +932,8 @@ class EventHandler(pyinotify.ProcessEvent):
         crate_logger.debug(event)
         self.incoming_operations.put([event, "delete"])
 
-    def process_IN_MODIFY(self, event):
+    # noinspection PyPep8Naming
+    def process_IN_MODIFY(self, event: pyinotify.Event):
         """
         Overrides the super.
         :param event:
@@ -939,7 +944,8 @@ class EventHandler(pyinotify.ProcessEvent):
         ):  # avoid propagating lock files
             self.incoming_operations.put([event, "modify"])
 
-    def process_IN_MOVED_FROM(self, event):
+    # noinspection PyPep8Naming
+    def process_IN_MOVED_FROM(self, event: pyinotify.Event):
         """
         Overrides the super.
         :param event:
@@ -952,7 +958,8 @@ class EventHandler(pyinotify.ProcessEvent):
             crate_logger.debug("Moved from: {}".format(event.pathname))
             self.move_events.append(event)
 
-    def process_IN_MOVED_TO(self, event):
+    # noinspection PyPep8Naming
+    def process_IN_MOVED_TO(self, event: pyinotify.Event):
         """
         Overrides the super.
         :param event:
@@ -966,7 +973,7 @@ class EventHandler(pyinotify.ProcessEvent):
         for move_event in self.move_events:
             was_moved_from = "in_moved_from" in move_event.maskname.lower()
             if (
-                move_event.cookie == event.cookie
+                move_event.cookie == event.cookie  # noqa
                 and was_moved_from
                 and BOX_DIR in Path(move_event.pathname).parents
             ):
@@ -995,13 +1002,16 @@ class EventHandler(pyinotify.ProcessEvent):
             # allow moving from a ~.lock file...i guess that may be okay
             crate_logger.debug("Moved to: {}".format(event.pathname))
 
-    def process_IN_DELETE_SELF(self, event):
+    # noinspection PyPep8Naming,PyMethodMayBeStatic
+    def process_IN_DELETE_SELF(self, event: pyinotify.Event):
         crate_logger.debug(event)
 
-    def process_ALL_EVENTS(self, event):
+    # noinspection PyPep8Naming,PyMethodMayBeStatic
+    def process_ALL_EVENTS(self, event: pyinotify.Event):
         crate_logger.debug(event)
 
-    def process_IN_CLOSE(self, event):
+    # noinspection PyPep8Naming
+    def process_IN_CLOSE(self, event: pyinotify.Event):
         """
         Overrides the super.
         :param event:
@@ -1016,7 +1026,9 @@ class EventHandler(pyinotify.ProcessEvent):
             crate_logger.debug(f"Skipping close on: {event.pathname=} due to `.~lock`")
 
 
-def get_box_folder(client, cur_box_folder, folder_id, retry_limit):
+def get_box_folder(
+    client: Client, cur_box_folder: Optional[Folder], folder_id: str, retry_limit: int
+):
     """
 
     :param client:
@@ -1054,7 +1066,9 @@ def get_box_folder(client, cur_box_folder, folder_id, retry_limit):
     return cur_box_folder
 
 
-def path_time_recurse_func(cur_path, wm=None) -> Dict[str, float]:
+def path_time_recurse_func(
+    cur_path: Union[str, Path], inotify_wm: pyinotify.WatchManager = None
+) -> Dict[str, float]:
     cur_data_map = {
         Path(cur_path)
         .resolve()
@@ -1064,7 +1078,7 @@ def path_time_recurse_func(cur_path, wm=None) -> Dict[str, float]:
     }
     cur_path = Path(cur_path)
     for sub_cur_path in cur_path.iterdir():
-        if wm:
+        if inotify_wm:
             pass
             # wm.add_watch(sub_cur_path.as_posix(), mask, rec=True, auto_add=True)
         if sub_cur_path.is_file():
@@ -1074,10 +1088,12 @@ def path_time_recurse_func(cur_path, wm=None) -> Dict[str, float]:
                 .timestamp()
             )
         else:
-            if wm:
+            if inotify_wm:
                 pass
                 # wm.add_watch(sub_cur_path.as_posix(), mask, rec=True, auto_add=True)
-            cur_data_map.update(**path_time_recurse_func(sub_cur_path, wm=wm))
+            cur_data_map.update(
+                **path_time_recurse_func(sub_cur_path, inotify_wm=inotify_wm)
+            )
     return cur_data_map
 
 
