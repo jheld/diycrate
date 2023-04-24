@@ -245,7 +245,6 @@ class EventHandler(pyinotify.ProcessEvent):
         file_path = Path(event.pathname)
         crate_logger.debug(f"Real close...: {file_path.as_posix()}")
         folders_to_traverse = self.folders_to_traverse(file_path.parent.as_posix())
-        crate_logger.debug(folders_to_traverse)
         client = Client(self.oauth)
         cur_box_folder = None
         cur_box_folder = get_box_folder(client, cur_box_folder, "0", 5)
@@ -480,7 +479,6 @@ class EventHandler(pyinotify.ProcessEvent):
     def process_create_event(self, event: pyinotify.Event):
         crate_logger.debug("Creating: {}".format(event.pathname))
         folders_to_traverse = self.folders_to_traverse(event.path)
-        crate_logger.debug(folders_to_traverse)
         client = Client(self.oauth)
         failed = False
         box_folder = None
@@ -602,7 +600,6 @@ class EventHandler(pyinotify.ProcessEvent):
         crate_logger.debug("Doing a move on: {}".format(event))
         src_event, dest_event = event
         folders_to_traverse = self.folders_to_traverse(dest_event.path)
-        crate_logger.debug(folders_to_traverse)
         client = Client(self.oauth)
         failed = False
         box_folder = None
@@ -855,7 +852,6 @@ class EventHandler(pyinotify.ProcessEvent):
     def process_delete_event(self, event: pyinotify.Event):
         crate_logger.debug(f"Doing a delete on {event=}")
         folders_to_traverse = self.folders_to_traverse(event.path)
-        crate_logger.debug(folders_to_traverse)
         client = Client(self.oauth)
         failed = False
         box_folder = None
