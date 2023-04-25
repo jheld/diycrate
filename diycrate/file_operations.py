@@ -310,8 +310,8 @@ class EventHandler(pyinotify.ProcessEvent):
 
             upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
         elif is_dir and not did_find_the_folder:
-            queue_item = UploadQueueItem(
-                partial(cur_box_folder.create_subfolder, file_path.name)
+            queue_item: UploadQueueItem = partial(
+                cur_box_folder.create_subfolder, file_path.name
             )
 
             upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
@@ -468,8 +468,8 @@ class EventHandler(pyinotify.ProcessEvent):
             crate_logger.debug(
                 "Creating a sub-folder...: {}".format(file_path.as_posix())
             )
-            queue_item = UploadQueueItem(
-                partial(cur_box_folder.create_subfolder, file_path.name)
+            queue_item: UploadQueueItem = partial(
+                cur_box_folder.create_subfolder, file_path.name
             )
 
             upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
@@ -543,9 +543,10 @@ class EventHandler(pyinotify.ProcessEvent):
                     a_file = client.file(file_id=entry["id"]).get()
                     # seem it is possible to get more than one create
                     # (without having a delete in between)
-                    queue_item = UploadQueueItem(
-                        partial(a_file.update_contents, event.pathname)
+                    queue_item: UploadQueueItem = partial(
+                        a_file.update_contents, event.pathname
                     )
+
                     upload_pool_executor.submit(
                         upload_queue_processor, queue_item=queue_item
                     )
@@ -588,11 +589,9 @@ class EventHandler(pyinotify.ProcessEvent):
             upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
         elif is_dir and not did_find_the_folder:
             crate_logger.debug("Upload the folder: {}".format(event.pathname))
-            queue_item = UploadQueueItem(
-                partial(
-                    cur_box_folder.create_subfolder,
-                    os.path.basename(event.pathname),
-                )
+            queue_item: UploadQueueItem = partial(
+                cur_box_folder.create_subfolder,
+                os.path.basename(event.pathname),
             )
 
             upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
@@ -729,7 +728,7 @@ class EventHandler(pyinotify.ProcessEvent):
                             upload_pool_executor.submit(
                                 upload_queue_processor, queue_item=queue_item
                             )
-                            queue_item = UploadQueueItem(partial(src_file.delete))
+                            queue_item: UploadQueueItem = partial(src_file.delete)
 
                             upload_pool_executor.submit(
                                 upload_queue_processor, queue_item=queue_item
@@ -845,11 +844,9 @@ class EventHandler(pyinotify.ProcessEvent):
                         upload_queue_processor, queue_item=queue_item
                     )
                 elif is_dir and not did_find_src_folder:
-                    queue_item = UploadQueueItem(
-                        partial(
-                            cur_box_folder.create_subfolder,
-                            os.path.basename(dest_event.pathname),
-                        )
+                    queue_item: UploadQueueItem = partial(
+                        cur_box_folder.create_subfolder,
+                        os.path.basename(dest_event.pathname),
                     )
 
                     upload_pool_executor.submit(
