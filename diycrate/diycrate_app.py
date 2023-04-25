@@ -24,11 +24,7 @@ from diycrate.file_operations import (
     in_moved_from,
     mask,
 )
-from diycrate.item_queue_io import (
-    upload_queue_processor,
-    download_queue_processor,
-    upload_queue,
-)
+
 from diycrate.long_poll_processing import long_poll_event_listener
 from diycrate.oauth_utils import store_tokens_callback, setup_remote_oauth, oauth_dance
 from diycrate.path_utils import re_walk
@@ -50,9 +46,6 @@ bottle_app = bottle.Bottle()
 
 BOX_DIR = Path()
 
-download_thread = threading.Thread(target=download_queue_processor)
-upload_thread = threading.Thread(target=upload_queue_processor)
-
 trash_directory = Path("~/.local/share/Trash/files").expanduser()
 wait_time = os.environ.get("DIY_CRATE_FILE_IO_OPERATIONS_WAIT_TIME_MS")
 if wait_time:
@@ -60,9 +53,7 @@ if wait_time:
 else:
     wait_time = 1
 
-handler = EventHandler(
-    upload_queue=upload_queue, bottle_app=bottle_app, wait_time=wait_time
-)
+handler = EventHandler(bottle_app=bottle_app, wait_time=wait_time)
 
 file_notify_read_freq = 3
 
@@ -154,12 +145,6 @@ def start_cloud_threads(client_oauth):
             time.sleep(2)
         else:
             failed = True
-    if not download_thread.is_alive():
-        download_thread.daemon = True
-        download_thread.start()
-    if not upload_thread.is_alive():
-        upload_thread.daemon = True
-        upload_thread.start()
     # local trash can
     wm.add_watch(
         trash_directory.as_posix(),

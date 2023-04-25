@@ -31,7 +31,11 @@ from diycrate.cache_utils import (
     local_or_box_file_m_time_key_func,
 )
 from diycrate.gui import notify_user_with_gui
-from diycrate.item_queue_io import download_queue, DownloadQueueItem
+from diycrate.item_queue_io import (
+    DownloadQueueItem,
+    download_pool_executor,
+    download_queue_processor,
+)
 from diycrate.log_utils import setup_logger
 
 setup_logger()
@@ -139,13 +143,14 @@ def process_item_create_long_poll(client: Client, event: Union[Event, Mapping]):
     elif obj_type == "file":
         if not file_path.is_file():
             try:
-                download_queue.put(
-                    DownloadQueueItem(
-                        client.file(file_id=obj_id).get(),
-                        path / event["source"]["name"],
-                        client._oauth,
-                        event,
-                    )
+                queue_item = DownloadQueueItem(
+                    client.file(file_id=obj_id).get(),
+                    path / event["source"]["name"],
+                    client._oauth,
+                    event,
+                )
+                download_pool_executor.submit(
+                    download_queue_processor, queue_item=queue_item
                 )
             except boxsdk.exception.BoxAPIException as box_exc:
                 if box_exc.status == 404 and box_exc.code == "trashed":
@@ -238,14 +243,16 @@ def process_item_copy_long_poll(client: Client, event: Union[Event, Mapping]):
         if not file_path.is_file():
             try:
                 box_item = client.file(file_id=obj_id).get()
-                download_queue.put(
-                    DownloadQueueItem(
-                        box_item,
-                        path / event["source"]["name"],
-                        client._oauth,
-                        event,
-                    )
+                queue_item = DownloadQueueItem(
+                    box_item,
+                    path / event["source"]["name"],
+                    client._oauth,
+                    event,
                 )
+                download_pool_executor.submit(
+                    download_queue_processor, queue_item=queue_item
+                )
+
             except boxsdk.exception.BoxAPIException as box_exc:
                 if box_exc.status == 404 and box_exc.code == "trashed":
                     crate_logger.debug(
@@ -377,14 +384,16 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
             box_file_for_download: File = client.file(file_id=obj_id).get(
                 fields=["modified_at", "etag", "name", "path_collection"]
             )
-            download_queue.put(
-                DownloadQueueItem(
-                    box_file_for_download,
-                    path / event["source"]["name"],
-                    client._oauth,
-                    event,
-                )
+            queue_item = DownloadQueueItem(
+                box_file_for_download,
+                path / event["source"]["name"],
+                client._oauth,
+                event,
             )
+            download_pool_executor.submit(
+                download_queue_processor, queue_item=queue_item
+            )
+
         except boxsdk.exception.BoxAPIException as box_exc:
             if box_exc.status == 404 and box_exc.code == "trashed":
                 crate_logger.debug(
@@ -532,9 +541,13 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
                             f"and the etag (local {version_info['etag']=}) "
                             f"(box {file_obj['etag']=}) is different"
                         )
-                        download_queue.put(
-                            DownloadQueueItem(file_obj, file_path, client._oauth, event)
+                        queue_item = DownloadQueueItem(
+                            file_obj, file_path, client._oauth, event
                         )
+                        download_pool_executor.submit(
+                            download_queue_processor, queue_item=queue_item
+                        )
+
         except boxsdk.exception.BoxAPIException as box_exc:
             if box_exc.status == 404 and box_exc.code == "trashed":
                 crate_logger.debug(

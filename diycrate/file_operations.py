@@ -31,7 +31,12 @@ from .cache_utils import (
     local_or_box_file_m_time_key_func,
     redis_set,
 )
-from .item_queue_io import UploadQueueItem, UploadQueueItemReal
+from .item_queue_io import (
+    UploadQueueItem,
+    UploadQueueItemReal,
+    upload_pool_executor,
+    upload_queue_processor,
+)
 from .iter_utils import SafeIter
 from .log_utils import setup_logger
 from .oauth_utils import setup_remote_oauth
@@ -65,7 +70,7 @@ class EventHandler(pyinotify.ProcessEvent):
         Extends the super to add cloud storage state.
         :return:
         """
-        our_keys = ["oauth", "upload_queue", "bottle_app", "wait_time"]
+        our_keys = ["oauth", "bottle_app", "wait_time"]
         our_kargs = {k: kargs.get(k) for k in our_keys}
         for key in our_keys:
             kargs.pop(key, None)
@@ -74,7 +79,6 @@ class EventHandler(pyinotify.ProcessEvent):
         self.move_events = []
         self.files_from_box = []
         self.folders_from_box = []
-        self.upload_queue = kargs["upload_queue"]
         self.incoming_operations = queue.Queue()
         self.operations = []
         self.wait_time = kargs.get("wait_time", 1)
@@ -220,8 +224,7 @@ class EventHandler(pyinotify.ProcessEvent):
         :param operation:
         :return:
         """
-        crate_logger.debug(event)
-        crate_logger.debug(operation)
+        crate_logger.debug(f"{operation=}, {event=}")
         try:
             if operation == "delete":
                 self.process_delete_event(event)
@@ -296,22 +299,22 @@ class EventHandler(pyinotify.ProcessEvent):
             box_uploader: ChunkedUploader = cur_box_folder.get_chunked_uploader(
                 file_path.as_posix()
             )
-            self.upload_queue.put(
-                UploadQueueItemReal(
-                    last_modified_time,
-                    partial(
-                        box_uploader.start,
-                    ),
-                    self.oauth,
-                    file_path.as_posix(),
-                )
+            queue_item = UploadQueueItemReal(
+                last_modified_time,
+                partial(
+                    box_uploader.start,
+                ),
+                self.oauth,
+                file_path.as_posix(),
             )
+
+            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
         elif is_dir and not did_find_the_folder:
-            self.upload_queue.put(
-                UploadQueueItem(
-                    partial(cur_box_folder.create_subfolder, file_path.name)
-                )
+            queue_item = UploadQueueItem(
+                partial(cur_box_folder.create_subfolder, file_path.name)
             )
+
+            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
 
     def process_modify_event(self, event: pyinotify.Event, operation: str):
         file_path = Path(event.pathname)
@@ -395,17 +398,17 @@ class EventHandler(pyinotify.ProcessEvent):
                         ):
                             can_update = False
                         if can_update:
-                            self.upload_queue.put(
-                                UploadQueueItemReal(
-                                    datetime.fromtimestamp(last_modified_time)
-                                    .astimezone(dateutil.tz.tzutc())
-                                    .timestamp(),
-                                    partial(
-                                        cur_file.update_contents, file_path.as_posix()
-                                    ),
-                                    self.oauth,
-                                    file_path.as_posix(),
-                                )
+                            queue_item = UploadQueueItemReal(
+                                datetime.fromtimestamp(last_modified_time)
+                                .astimezone(dateutil.tz.tzutc())
+                                .timestamp(),
+                                partial(cur_file.update_contents, file_path.as_posix()),
+                                self.oauth,
+                                file_path.as_posix(),
+                            )
+
+                            upload_pool_executor.submit(
+                                upload_queue_processor, queue_item=queue_item
                             )
                         else:
                             is_new_time_stamp = (
@@ -443,8 +446,6 @@ class EventHandler(pyinotify.ProcessEvent):
                             event.pathname
                         )
                     )
-                    # cur_folder = client.folder(folder_id=entry['id']).get()
-                    # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
                 else:
                     self.folders_from_box.remove(
                         entry.object_id
@@ -453,27 +454,25 @@ class EventHandler(pyinotify.ProcessEvent):
         if is_file and not did_find_the_file:
             crate_logger.debug("Uploading contents...: {}".format(file_path.as_posix()))
             last_modified_time = Path(event.pathname).stat().st_mtime
-            self.upload_queue.put(
-                UploadQueueItemReal(
-                    datetime.fromtimestamp(last_modified_time)
-                    .astimezone(dateutil.tz.tzutc())
-                    .timestamp(),
-                    partial(
-                        cur_box_folder.upload, file_path.as_posix(), file_path.name
-                    ),
-                    self.oauth,
-                    file_path.as_posix(),
-                )
+            queue_item = UploadQueueItemReal(
+                datetime.fromtimestamp(last_modified_time)
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp(),
+                partial(cur_box_folder.upload, file_path.as_posix(), file_path.name),
+                self.oauth,
+                file_path.as_posix(),
             )
+
+            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
         if is_dir and not did_find_the_folder:
             crate_logger.debug(
                 "Creating a sub-folder...: {}".format(file_path.as_posix())
             )
-            self.upload_queue.put(
-                UploadQueueItem(
-                    partial(cur_box_folder.create_subfolder, file_path.name)
-                )
+            queue_item = UploadQueueItem(
+                partial(cur_box_folder.create_subfolder, file_path.name)
             )
+
+            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
             # wm.add_watch(file_path.as_posix(), rec=True, mask=mask, auto_add=True)
 
     def process_create_event(self, event: pyinotify.Event):
@@ -544,8 +543,11 @@ class EventHandler(pyinotify.ProcessEvent):
                     a_file = client.file(file_id=entry["id"]).get()
                     # seem it is possible to get more than one create
                     # (without having a delete in between)
-                    self.upload_queue.put(
-                        UploadQueueItem(partial(a_file.update_contents, event.pathname))
+                    queue_item = UploadQueueItem(
+                        partial(a_file.update_contents, event.pathname)
+                    )
+                    upload_pool_executor.submit(
+                        upload_queue_processor, queue_item=queue_item
                     )
                     # cur_box_folder.upload(event.pathname, event.name)
                 else:
@@ -570,30 +572,30 @@ class EventHandler(pyinotify.ProcessEvent):
             r_c.set(
                 f"{event.pathname}:created:enqueue", value=1, ex=timedelta(minutes=1)
             )
-            self.upload_queue.put(
-                UploadQueueItemReal(
-                    datetime.fromtimestamp(last_modified_time)
-                    .astimezone(dateutil.tz.tzutc())
-                    .timestamp(),
-                    partial(
-                        cur_box_folder.upload,
-                        event.pathname,
-                        os.path.basename(event.pathname),
-                    ),
-                    self.oauth,
+            queue_item = UploadQueueItemReal(
+                datetime.fromtimestamp(last_modified_time)
+                .astimezone(dateutil.tz.tzutc())
+                .timestamp(),
+                partial(
+                    cur_box_folder.upload,
                     event.pathname,
-                )
+                    os.path.basename(event.pathname),
+                ),
+                self.oauth,
+                event.pathname,
             )
+
+            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
         elif is_dir and not did_find_the_folder:
             crate_logger.debug("Upload the folder: {}".format(event.pathname))
-            self.upload_queue.put(
-                UploadQueueItem(
-                    partial(
-                        cur_box_folder.create_subfolder,
-                        os.path.basename(event.pathname),
-                    )
+            queue_item = UploadQueueItem(
+                partial(
+                    cur_box_folder.create_subfolder,
+                    os.path.basename(event.pathname),
                 )
             )
+
+            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
             # wm.add_watch(event.pathname, rec=True, mask=mask, auto_add=True)
 
     def process_move_event(self, event: pyinotify.Event):
@@ -713,22 +715,24 @@ class EventHandler(pyinotify.ProcessEvent):
                             is_dir and matching_name and isinstance(cur_entry, Folder)
                         )
                         if did_find_cur_file:
-                            self.upload_queue.put(
-                                UploadQueueItemReal(
-                                    datetime.fromtimestamp(
-                                        Path(dest_event.pathname).stat().st_mtime
-                                    )
-                                    .astimezone(dateutil.tz.tzutc())
-                                    .timestamp(),
-                                    partial(
-                                        cur_entry.update_contents, dest_event.pathname
-                                    ),
-                                    self.oauth,
-                                    dest_event.pathname,
+                            queue_item = UploadQueueItemReal(
+                                datetime.fromtimestamp(
+                                    Path(dest_event.pathname).stat().st_mtime
                                 )
+                                .astimezone(dateutil.tz.tzutc())
+                                .timestamp(),
+                                partial(cur_entry.update_contents, dest_event.pathname),
+                                self.oauth,
+                                dest_event.pathname,
                             )
-                            self.upload_queue.put(
-                                UploadQueueItem(partial(src_file.delete))
+
+                            upload_pool_executor.submit(
+                                upload_queue_processor, queue_item=queue_item
+                            )
+                            queue_item = UploadQueueItem(partial(src_file.delete))
+
+                            upload_pool_executor.submit(
+                                upload_queue_processor, queue_item=queue_item
                             )
                             break
                         elif did_find_cur_folder:
@@ -785,19 +789,19 @@ class EventHandler(pyinotify.ProcessEvent):
                             is_dir and matching_name and isinstance(cur_entry, Folder)
                         )
                         if did_find_cur_file:
-                            self.upload_queue.put(
-                                UploadQueueItemReal(
-                                    datetime.fromtimestamp(
-                                        Path(dest_event.pathname).stat().st_mtime
-                                    )
-                                    .astimezone(dateutil.tz.tzutc())
-                                    .timestamp(),
-                                    partial(
-                                        cur_entry.update_contents, dest_event.pathname
-                                    ),
-                                    self.oauth,
-                                    dest_event.pathname,
+                            queue_item = UploadQueueItemReal(
+                                datetime.fromtimestamp(
+                                    Path(dest_event.pathname).stat().st_mtime
                                 )
+                                .astimezone(dateutil.tz.tzutc())
+                                .timestamp(),
+                                partial(cur_entry.update_contents, dest_event.pathname),
+                                self.oauth,
+                                dest_event.pathname,
+                            )
+
+                            upload_pool_executor.submit(
+                                upload_queue_processor, queue_item=queue_item
                             )
                             break
                         elif did_find_cur_folder:
@@ -824,28 +828,32 @@ class EventHandler(pyinotify.ProcessEvent):
                     # src file [should] no longer exist[s].
                     # this file did not originate in box, too.
                     last_modified_time = Path(dest_event.pathname).stat().st_mtime
-                    self.upload_queue.put(
-                        UploadQueueItemReal(
-                            datetime.fromtimestamp(last_modified_time)
-                            .astimezone(dateutil.tz.tzutc())
-                            .timestamp(),
-                            partial(
-                                cur_box_folder.upload,
-                                dest_event.pathname,
-                                os.path.basename(dest_event.pathname),
-                            ),
-                            self.oauth,
+                    queue_item = UploadQueueItemReal(
+                        datetime.fromtimestamp(last_modified_time)
+                        .astimezone(dateutil.tz.tzutc())
+                        .timestamp(),
+                        partial(
+                            cur_box_folder.upload,
                             dest_event.pathname,
-                        )
+                            os.path.basename(dest_event.pathname),
+                        ),
+                        self.oauth,
+                        dest_event.pathname,
+                    )
+
+                    upload_pool_executor.submit(
+                        upload_queue_processor, queue_item=queue_item
                     )
                 elif is_dir and not did_find_src_folder:
-                    self.upload_queue.put(
-                        UploadQueueItem(
-                            partial(
-                                cur_box_folder.create_subfolder,
-                                os.path.basename(dest_event.pathname),
-                            )
+                    queue_item = UploadQueueItem(
+                        partial(
+                            cur_box_folder.create_subfolder,
+                            os.path.basename(dest_event.pathname),
                         )
+                    )
+
+                    upload_pool_executor.submit(
+                        upload_queue_processor, queue_item=queue_item
                     )
                     # wm.add_watch(dest_event.pathname, rec=True, mask=mask, auto_add=True)
 
@@ -908,8 +916,6 @@ class EventHandler(pyinotify.ProcessEvent):
             ):
                 if entry["id"] not in self.folders_from_box:
                     self.get_folder(client, entry["id"]).delete()
-                    # cur_folder = client.folder(folder_id=entry['id']).get()
-                    # upload_queue.put(partial(cur_folder.update_contents, event.pathname))
                 else:
                     self.folders_from_box.remove(
                         entry["id"]

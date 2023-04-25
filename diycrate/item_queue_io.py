@@ -1,7 +1,7 @@
+import concurrent.futures
 import configparser
 import json
 import os
-import queue
 import random
 import time
 import logging
@@ -37,37 +37,35 @@ setup_logger()
 crate_logger = logging.getLogger(__name__)
 
 
-def upload_queue_processor():
+def upload_queue_processor(queue_item: "UploadQueueItem"):
     """
     Implements a simple re-try mechanism for pending uploads
     :return:
     """
-    while True:
-        callable_up = upload_queue.get()  # blocks
-        # TODO: pass in the actual item being updated/uploaded,
-        #  so we can do more intelligent retry mechanisms
-        was_list = isinstance(callable_up, (list, tuple))
-        last_modified_time = oauth = explicit_file_path = None
-        if was_list:
-            original_callable_up = callable_up
-            last_modified_time, callable_up, oauth = original_callable_up[:3]
-            if len(original_callable_up) > 3:
-                explicit_file_path = original_callable_up[3]
-            elif isinstance(callable_up, partial):
-                explicit_file_path = callable_up.args[0]
-        args = callable_up.args if isinstance(callable_up, partial) else None
-        num_retries = 15
-        perform_upload(
-            args,
-            callable_up,
-            last_modified_time,
-            num_retries,
-            oauth,
-            explicit_file_path,
-            was_list,
-            retry_limit=num_retries,
-        )
-        upload_queue.task_done()
+    callable_up = queue_item
+    # TODO: pass in the actual item being updated/uploaded,
+    #  so we can do more intelligent retry mechanisms
+    was_list = isinstance(callable_up, (list, tuple))
+    last_modified_time = oauth = explicit_file_path = None
+    if was_list:
+        original_callable_up = callable_up
+        last_modified_time, callable_up, oauth = original_callable_up[:3]
+        if len(original_callable_up) > 3:
+            explicit_file_path = original_callable_up[3]
+        elif isinstance(callable_up, partial):
+            explicit_file_path = callable_up.args[0]
+    args = callable_up.args if isinstance(callable_up, partial) else None
+    num_retries = 15
+    perform_upload(
+        args,
+        callable_up,
+        last_modified_time,
+        num_retries,
+        oauth,
+        explicit_file_path,
+        was_list,
+        retry_limit=num_retries,
+    )
 
 
 def perform_upload(
@@ -156,69 +154,56 @@ def perform_upload(
             break
 
 
-def download_queue_processor():
+def download_queue_processor(queue_item: "DownloadQueueItem"):
     """
     Implements a simple re-try mechanism for pending downloads
     :return:
     """
-    while True:
-        if download_queue.not_empty:
-            download_queue_item: DownloadQueueItem = download_queue.get()
-            item = download_queue_item.item
-            path = download_queue_item.path
-            event = download_queue_item.event
-            if event and r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+    download_queue_item = queue_item
+    item = download_queue_item.item
+    path = download_queue_item.path
+    event = download_queue_item.event
+    if event and r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+        crate_logger.debug(f"Skipping download due to processed event ID for {path=}")
+    if item["type"] == "file":
+        info = redis_get(r_c, item) if r_c.exists(redis_key(item.object_id)) else None
+        # client = Client(oauth)  # keep it around for easy access
+        # hack because we did not use to store the file_path,
+        # but do not want to force a download
+        if info and "file_path" not in info:
+            crate_logger.debug(
+                f"updating local cache so the data is accurate, "
+                f"but not doing the download {path=}"
+            )
+            info["file_path"] = path
+            r_c.set(redis_key(item.object_id), json.dumps(info))
+            r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
+        if info and info["etag"] == item["etag"] and os.path.exists(path):
+            crate_logger.debug(
+                f"ETAG {info['etag']} for {path=} is identical and file exists locally, "
+                f"will skip download."
+            )
+        # no version, or diff version, or the file does not exist locally
+        if not info or info["etag"] != item["etag"] or not os.path.exists(path):
+            if info:
                 crate_logger.debug(
-                    f"marking task as done due to already processed event ID for {path=}"
+                    f"Preprocessing logic before download attempt. "
+                    f"{path=} ETAG {info['etag']=} vs {item['etag']=}"
                 )
-                download_queue.task_done()
-                continue
-            if item["type"] == "file":
-                info = (
-                    redis_get(r_c, item)
-                    if r_c.exists(redis_key(item.object_id))
-                    else None
-                )
-                # client = Client(oauth)  # keep it around for easy access
-                # hack because we did not use to store the file_path,
-                # but do not want to force a download
-                if info and "file_path" not in info:
-                    crate_logger.debug(
-                        f"updating local cache so the data is accurate, "
-                        f"but not doing the download {path=}"
-                    )
-                    info["file_path"] = path
-                    r_c.set(redis_key(item.object_id), json.dumps(info))
-                    r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-                if info and info["etag"] == item["etag"] and os.path.exists(path):
-                    crate_logger.debug(
-                        f"ETAG {info['etag']} for {path=} is identical and file exists locally, "
-                        f"will skip download."
-                    )
-                # no version, or diff version, or the file does not exist locally
-                if not info or info["etag"] != item["etag"] or not os.path.exists(path):
-                    if info:
-                        crate_logger.debug(
-                            f"Preprocessing logic before download attempt. "
-                            f"{path=} ETAG {info['etag']=} vs {item['etag']=}"
-                        )
-                    try:
-                        crate_logger.debug(f"attempt the download {path=}")
-                        perform_download(item, path)
-                    except (ConnectionResetError, ConnectionError):
-                        crate_logger.debug("Error occurred.", exc_info=True)
-                        time.sleep(5)
-                crate_logger.debug(f"marking task as done for {path=}")
-                download_queue.task_done()
-            else:
-                crate_logger.debug(f"was not a file, marking task as done for {path=}")
-                download_queue.task_done()
-            if event:
-                r_c.setex(
-                    f"diy_crate:event_ids:{event.event_id}",
-                    timedelta(days=32),
-                    (path.as_posix() if isinstance(path, Path) else path),
-                )
+            try:
+                crate_logger.debug(f"attempt the download {path=}")
+                perform_download(item, path)
+            except (ConnectionResetError, ConnectionError):
+                crate_logger.debug("Error occurred.", exc_info=True)
+                time.sleep(5)
+    else:
+        crate_logger.debug(f"was not a file, making this a no-op on {path=}")
+    if event:
+        r_c.setex(
+            f"diy_crate:event_ids:{event.event_id}",
+            timedelta(days=32),
+            (path.as_posix() if isinstance(path, Path) else path),
+        )
 
 
 def perform_download(item: File, path: Union[str, Path], retry_limit=15):
@@ -328,9 +313,14 @@ class UploadQueueItemReal(NamedTuple):
 
 UploadQueueItem = Union[Callable[..., Any], UploadQueueItemReal]
 
-download_queue: "queue.Queue[DownloadQueueItem]" = queue.Queue()
-upload_queue: "queue.Queue[UploadQueueItem]" = queue.Queue()
 uploads_given_up_on: List[Callable[..., Any]] = []
+
+download_pool_executor = concurrent.futures.ThreadPoolExecutor(
+    thread_name_prefix="download_thread"
+)
+upload_pool_executor = concurrent.futures.ThreadPoolExecutor(
+    thread_name_prefix="upload_thread"
+)
 
 conf_obj = configparser.ConfigParser()
 conf_dir = Path("~/.config/diycrate").expanduser().resolve()
