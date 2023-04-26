@@ -37,7 +37,26 @@ setup_logger()
 crate_logger = logging.getLogger(__name__)
 
 
-def upload_queue_processor(queue_item: "UploadQueueItem"):
+class DownloadQueueItem(NamedTuple):
+    item: Union[File, Folder]
+    path: Union[Path, str]
+    oauth: OAuth2
+    event: Union[Event, Mapping, None]
+
+
+class UploadQueueItemReal(NamedTuple):
+    timestamp: float
+    callable_up: Callable[..., Any]
+    oauth: OAuth2
+    explicit_file_path: Union[Path, str, None]
+
+
+UploadQueueItem = Union[Callable[..., Any], UploadQueueItemReal]
+
+uploads_given_up_on: List[Callable[..., Any]] = []
+
+
+def upload_queue_processor(queue_item: UploadQueueItem):
     """
     Implements a simple re-try mechanism for pending uploads
     :return:
@@ -296,24 +315,6 @@ def perform_download(item: File, path: Union[str, Path], retry_limit=15):
                     raise
             break
 
-
-class DownloadQueueItem(NamedTuple):
-    item: Union[File, Folder]
-    path: Union[Path, str]
-    oauth: OAuth2
-    event: Union[Event, Mapping, None]
-
-
-class UploadQueueItemReal(NamedTuple):
-    timestamp: float
-    callable_up: Callable[..., Any]
-    oauth: OAuth2
-    explicit_file_path: Union[Path, str, None]
-
-
-UploadQueueItem = Union[Callable[..., Any], UploadQueueItemReal]
-
-uploads_given_up_on: List[Callable[..., Any]] = []
 
 download_pool_executor = concurrent.futures.ThreadPoolExecutor(
     thread_name_prefix="download_thread"
