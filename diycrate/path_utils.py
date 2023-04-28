@@ -401,7 +401,9 @@ def kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path):
         queue_item = DownloadQueueItem(
             file_obj, os.path.join(path, box_item["name"]), oauth_obj, None
         )
-        download_pool_executor.submit(download_queue_processor, queue_item=queue_item)
+        download_pool_executor.apply_async(
+            download_queue_processor, kwds=dict(queue_item=queue_item)
+        )
 
     except BoxAPIException as e:
         crate_logger.debug("Error occurred", exc_info=True)
@@ -506,7 +508,9 @@ def local_files_walk_pre_process(
             # upload_queue.put(
             #     queue_item
             # )
-            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
+            upload_pool_executor.apply_async(
+                upload_queue_processor, kwds=dict(queue_item=queue_item)
+            )
 
     end_t = time.monotonic()
     crate_logger.debug(

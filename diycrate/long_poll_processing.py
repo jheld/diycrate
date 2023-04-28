@@ -149,8 +149,8 @@ def process_item_create_long_poll(client: Client, event: Union[Event, Mapping]):
                     client._oauth,
                     event,
                 )
-                download_pool_executor.submit(
-                    download_queue_processor, queue_item=queue_item
+                download_pool_executor.apply_async(
+                    download_queue_processor, kwds=dict(queue_item=queue_item)
                 )
             except boxsdk.exception.BoxAPIException as box_exc:
                 if box_exc.status == 404 and box_exc.code == "trashed":
@@ -249,8 +249,8 @@ def process_item_copy_long_poll(client: Client, event: Union[Event, Mapping]):
                     client._oauth,
                     event,
                 )
-                download_pool_executor.submit(
-                    download_queue_processor, queue_item=queue_item
+                download_pool_executor.apply_async(
+                    download_queue_processor, kwds=dict(queue_item=queue_item)
                 )
 
             except boxsdk.exception.BoxAPIException as box_exc:
@@ -390,8 +390,9 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
                 client._oauth,
                 event,
             )
-            download_pool_executor.submit(
-                download_queue_processor, queue_item=queue_item
+
+            download_pool_executor.apply_async(
+                download_queue_processor, kwds=dict(queue_item=queue_item)
             )
 
         except boxsdk.exception.BoxAPIException as box_exc:
@@ -544,8 +545,8 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
                         queue_item = DownloadQueueItem(
                             file_obj, file_path, client._oauth, event
                         )
-                        download_pool_executor.submit(
-                            download_queue_processor, queue_item=queue_item
+                        download_pool_executor.apply_async(
+                            download_queue_processor, kwds=dict(queue_item=queue_item)
                         )
 
         except boxsdk.exception.BoxAPIException as box_exc:

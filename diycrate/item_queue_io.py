@@ -1,6 +1,6 @@
-import concurrent.futures
 import configparser
 import json
+import multiprocessing.pool
 import os
 import random
 import time
@@ -316,12 +316,9 @@ def perform_download(item: File, path: Union[str, Path], retry_limit=15):
             break
 
 
-download_pool_executor = concurrent.futures.ThreadPoolExecutor(
-    thread_name_prefix="download_thread"
-)
-upload_pool_executor = concurrent.futures.ThreadPoolExecutor(
-    thread_name_prefix="upload_thread"
-)
+# cannot use the concurrent future executor classes due to a daemon issue 3.9+.
+download_pool_executor = multiprocessing.pool.ThreadPool()
+upload_pool_executor = multiprocessing.pool.ThreadPool()
 
 conf_obj = configparser.ConfigParser()
 conf_dir = Path("~/.config/diycrate").expanduser().resolve()

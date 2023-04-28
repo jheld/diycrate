@@ -308,13 +308,17 @@ class EventHandler(pyinotify.ProcessEvent):
                 file_path.as_posix(),
             )
 
-            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
+            upload_pool_executor.apply_async(
+                upload_queue_processor, kwds=dict(queue_item=queue_item)
+            )
         elif is_dir and not did_find_the_folder:
             queue_item: UploadQueueItem = partial(
                 cur_box_folder.create_subfolder, file_path.name
             )
 
-            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
+            upload_pool_executor.apply_async(
+                upload_queue_processor, kwds=dict(queue_item=queue_item)
+            )
 
     def process_modify_event(self, event: pyinotify.Event, operation: str):
         file_path = Path(event.pathname)
@@ -407,8 +411,8 @@ class EventHandler(pyinotify.ProcessEvent):
                                 file_path.as_posix(),
                             )
 
-                            upload_pool_executor.submit(
-                                upload_queue_processor, queue_item=queue_item
+                            upload_pool_executor.apply_async(
+                                upload_queue_processor, kwds=dict(queue_item=queue_item)
                             )
                         else:
                             is_new_time_stamp = (
@@ -463,7 +467,9 @@ class EventHandler(pyinotify.ProcessEvent):
                 file_path.as_posix(),
             )
 
-            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
+            upload_pool_executor.apply_async(
+                upload_queue_processor, kwds=dict(queue_item=queue_item)
+            )
         if is_dir and not did_find_the_folder:
             crate_logger.debug(
                 "Creating a sub-folder...: {}".format(file_path.as_posix())
@@ -472,7 +478,9 @@ class EventHandler(pyinotify.ProcessEvent):
                 cur_box_folder.create_subfolder, file_path.name
             )
 
-            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
+            upload_pool_executor.apply_async(
+                upload_queue_processor, kwds=dict(queue_item=queue_item)
+            )
             # wm.add_watch(file_path.as_posix(), rec=True, mask=mask, auto_add=True)
 
     def process_create_event(self, event: pyinotify.Event):
@@ -547,8 +555,8 @@ class EventHandler(pyinotify.ProcessEvent):
                         a_file.update_contents, event.pathname
                     )
 
-                    upload_pool_executor.submit(
-                        upload_queue_processor, queue_item=queue_item
+                    upload_pool_executor.apply_async(
+                        upload_queue_processor, kwds=dict(queue_item=queue_item)
                     )
                     # cur_box_folder.upload(event.pathname, event.name)
                 else:
@@ -586,7 +594,9 @@ class EventHandler(pyinotify.ProcessEvent):
                 event.pathname,
             )
 
-            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
+            upload_pool_executor.apply_async(
+                upload_queue_processor, kwds=dict(queue_item=queue_item)
+            )
         elif is_dir and not did_find_the_folder:
             crate_logger.debug("Upload the folder: {}".format(event.pathname))
             queue_item: UploadQueueItem = partial(
@@ -594,7 +604,9 @@ class EventHandler(pyinotify.ProcessEvent):
                 os.path.basename(event.pathname),
             )
 
-            upload_pool_executor.submit(upload_queue_processor, queue_item=queue_item)
+            upload_pool_executor.apply_async(
+                upload_queue_processor, kwds=dict(queue_item=queue_item)
+            )
             # wm.add_watch(event.pathname, rec=True, mask=mask, auto_add=True)
 
     def process_move_event(self, event: pyinotify.Event):
@@ -725,13 +737,13 @@ class EventHandler(pyinotify.ProcessEvent):
                                 dest_event.pathname,
                             )
 
-                            upload_pool_executor.submit(
-                                upload_queue_processor, queue_item=queue_item
+                            upload_pool_executor.apply_async(
+                                upload_queue_processor, kwds=dict(queue_item=queue_item)
                             )
                             queue_item: UploadQueueItem = partial(src_file.delete)
 
-                            upload_pool_executor.submit(
-                                upload_queue_processor, queue_item=queue_item
+                            upload_pool_executor.apply_async(
+                                upload_queue_processor, kwds=dict(queue_item=queue_item)
                             )
                             break
                         elif did_find_cur_folder:
@@ -799,8 +811,8 @@ class EventHandler(pyinotify.ProcessEvent):
                                 dest_event.pathname,
                             )
 
-                            upload_pool_executor.submit(
-                                upload_queue_processor, queue_item=queue_item
+                            upload_pool_executor.apply_async(
+                                upload_queue_processor, kwds=dict(queue_item=queue_item)
                             )
                             break
                         elif did_find_cur_folder:
@@ -840,8 +852,8 @@ class EventHandler(pyinotify.ProcessEvent):
                         dest_event.pathname,
                     )
 
-                    upload_pool_executor.submit(
-                        upload_queue_processor, queue_item=queue_item
+                    upload_pool_executor.apply_async(
+                        upload_queue_processor, kwds=dict(queue_item=queue_item)
                     )
                 elif is_dir and not did_find_src_folder:
                     queue_item: UploadQueueItem = partial(
@@ -849,8 +861,8 @@ class EventHandler(pyinotify.ProcessEvent):
                         os.path.basename(dest_event.pathname),
                     )
 
-                    upload_pool_executor.submit(
-                        upload_queue_processor, queue_item=queue_item
+                    upload_pool_executor.apply_async(
+                        upload_queue_processor, kwds=dict(queue_item=queue_item)
                     )
                     # wm.add_watch(dest_event.pathname, rec=True, mask=mask, auto_add=True)
 
