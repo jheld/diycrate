@@ -253,6 +253,15 @@ def perform_download(item: File, path: Union[str, Path], retry_limit=15):
                     f"right before we tried to download",
                     exc_info=True,
                 )
+            elif e.status == 429:
+                sleep_time = random.randint(2, pow(2, 5))
+                crate_logger.info(
+                    f"Rate limited during download operation with "
+                    f"item: {item['id']}, "
+                    f"{path}. Will sleep {sleep_time} before retry."
+                )
+                time.sleep(sleep_time)
+                continue
             break
         else:
             if i:
