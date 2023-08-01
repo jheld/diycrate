@@ -669,7 +669,7 @@ def process_item_move_long_poll(event: Union[Event, Mapping]):
                                 sub_item_info["file_path"].split(os.path.sep)[orig_len:]
                             )
                             new_sub_path = file_path / tail
-                            sub_item_info["file_path"] = new_sub_path
+                            sub_item_info["file_path"] = new_sub_path.as_posix()
                             to_set.append(
                                 partial(
                                     r_c.set,
