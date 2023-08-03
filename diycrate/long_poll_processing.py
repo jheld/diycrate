@@ -29,6 +29,7 @@ from diycrate.cache_utils import (
     redis_key,
     redis_get,
     local_or_box_file_m_time_key_func,
+    redis_path_for_object_id_key,
 )
 from diycrate.gui import notify_user_with_gui
 from diycrate.item_queue_io import (
@@ -118,6 +119,9 @@ def process_item_create_long_poll(client: Client, event: Union[Event, Mapping]):
             r_c.set(
                 local_or_box_file_m_time_key_func(path / box_item.name, True),
                 parse(box_item.modified_at).astimezone(tzutc()).timestamp(),
+            )
+            r_c.set(
+                redis_path_for_object_id_key(path / box_item.name), box_item.object_id
             )
             r_c.setex(
                 f"diy_crate:event_ids:{event.event_id}",
@@ -218,6 +222,9 @@ def process_item_copy_long_poll(client: Client, event: Union[Event, Mapping]):
                 local_or_box_file_m_time_key_func(path / box_item.name, True),
                 parse(box_item.modified_at).astimezone(tzutc()).timestamp(),
             )
+            r_c.set(
+                redis_path_for_object_id_key(path / box_item.name), box_item.object_id
+            )
             r_c.setex(
                 f"diy_crate:event_ids:{event.event_id}",
                 timedelta(days=32),
@@ -304,7 +311,7 @@ def process_item_trash_file(event: Union[Event, Mapping], obj_id):
     if file_path.exists():
         send2trash(file_path.as_posix())
     if r_c.exists(redis_key(obj_id)):
-        r_c.delete(redis_key(obj_id))
+        r_c.delete(redis_key(obj_id), redis_path_for_object_id_key(file_path))
         r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
     notify_user_with_gui(
         "Box message: Deleted:",
@@ -337,14 +344,20 @@ def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
         file_path = path / item_info["file_path"]
     if file_path.is_dir():
         # still need to get the parent_id
-        for box_id in get_sub_ids(obj_id):
-            r_c.delete(redis_key(box_id))
+        for sub_box_id in get_sub_ids(obj_id):
+            cur_sub_box_redis_data = r_c.get(redis_key(sub_box_id))
+            if cur_sub_box_redis_data:
+                cur_sub_box_item_info = json.loads(
+                    str(cur_sub_box_redis_data, encoding="utf-8", errors="strict")
+                )
+                r_c.delete(cur_sub_box_item_info["file_name"])
+            r_c.delete(redis_key(sub_box_id))
         r_c.delete(redis_key(obj_id))
         shutil.rmtree(file_path)
-        obj_cache_data = r_c.get(redis_key(obj_id))
+        obj_cache_data = json.loads(str(r_c.get(redis_key(obj_id))))
         parent_id = obj_cache_data.get("parent_id") if obj_cache_data else None
         if parent_id:
-            parent_folder = r_c.get(redis_key(parent_id))
+            parent_folder = json.loads(str(r_c.get(redis_key(parent_id))))
             sub_ids = parent_folder.get("sub_ids", [])
             if sub_ids:
                 sub_ids.remove(obj_id)
@@ -514,8 +527,15 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
                     local_or_box_file_m_time_key_func(path / file_obj.name, True),
                     parse(file_obj.modified_at).astimezone(tzutc()).timestamp(),
                 )
-                r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
-                r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
+                r_c.set(
+                    redis_path_for_object_id_key(path / file_obj.name),
+                    file_obj.object_id,
+                )
+                r_c.delete(
+                    redis_path_for_object_id_key(src_file_path),
+                    local_or_box_file_m_time_key_func(src_file_path, False),
+                    local_or_box_file_m_time_key_func(src_file_path, True),
+                )
                 r_c.setex(
                     f"diy_crate:event_ids:{event.event_id}",
                     timedelta(days=32),
@@ -603,6 +623,10 @@ def process_item_rename_long_poll(client: Client, event: Union[Event, Mapping]):
                     local_or_box_file_m_time_key_func(path / folder_obj.name, True),
                     parse(folder_obj.modified_at).astimezone(tzutc()).timestamp(),
                 )
+                r_c.set(
+                    redis_path_for_object_id_key(path / folder_obj.name),
+                    folder_obj.object_id,
+                )
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
                 r_c.setex(
@@ -677,6 +701,13 @@ def process_item_move_long_poll(event: Union[Event, Mapping]):
                                     json.dumps(sub_item_info),
                                 )
                             )
+                            to_set.append(
+                                partial(
+                                    r_c.set,
+                                    redis_path_for_object_id_key(new_sub_path),
+                                    sub_id,
+                                )
+                            )
                 shutil.move(src_file_path, file_path)
                 for item in to_set:
                     item()
@@ -698,6 +729,8 @@ def process_item_move_long_poll(event: Union[Event, Mapping]):
                     .astimezone(tzutc())
                     .timestamp(),
                 )
+                r_c.set(redis_path_for_object_id_key(file_path), obj_id)
+                r_c.delete(redis_path_for_object_id_key(src_file_path))
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, False))
                 r_c.delete(local_or_box_file_m_time_key_func(src_file_path, True))
                 r_c.setex(

@@ -27,6 +27,7 @@ from .cache_utils import (
     redis_get,
     r_c,
     local_or_box_file_m_time_key_func,
+    redis_path_for_object_id_key,
 )
 from .gui import notify_user_with_gui
 from .log_utils import setup_logger
@@ -111,7 +112,9 @@ def perform_upload(
                 item = ret_val  # is the new/updated item
                 if isinstance(item, File):
                     client = Client(oauth)
-                    file_obj: File = client.file(file_id=item.object_id).get()
+                    file_obj: File = client.file(file_id=item.object_id).get(
+                        fields=["path_collection", "name", "etag"]
+                    )
                     redis_set(r_c, file_obj, last_modified_time, box_dir_path=BOX_DIR)
                     r_c.set(
                         local_or_box_file_m_time_key_func(path_name, False),
@@ -119,15 +122,12 @@ def perform_upload(
                         .astimezone(dateutil.tz.tzutc())
                         .timestamp(),
                     )
+                    r_c.set(redis_path_for_object_id_key(path_name), item.object_id)
 
                     path_builder = BOX_DIR
-                    oauth = setup_remote_oauth(r_c, conf=conf_obj)
-                    client = Client(oauth)
-                    for entry in (
-                        client.file(item.object_id)
-                        .get(fields=["path_collection"])
-                        .path_collection["entries"]
-                    ):
+                    # oauth = setup_remote_oauth(r_c, conf=conf_obj)
+                    # client = Client(oauth)
+                    for entry in file_obj.path_collection["entries"]:
                         if entry.id == "0":
                             continue
                         path_builder /= entry.name
@@ -139,6 +139,10 @@ def perform_upload(
                             parse(folder_entry.modified_at)
                             .astimezone(dateutil.tz.tzutc())
                             .timestamp(),
+                        )
+                        r_c.set(
+                            redis_path_for_object_id_key(path_builder),
+                            folder_entry.object_id,
                         )
 
             break
@@ -296,6 +300,7 @@ def perform_download(item: File, path: Union[str, Path], retry_limit=15):
                 local_or_box_file_m_time_key_func(path / item.name, True),
                 parse(item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
             )
+            r_c.set(redis_path_for_object_id_key(path / item.name), item.object_id)
             path_builder = BOX_DIR
             oauth = setup_remote_oauth(r_c, conf=conf_obj)
             client = Client(oauth)
@@ -312,12 +317,25 @@ def perform_download(item: File, path: Union[str, Path], retry_limit=15):
                         .astimezone(dateutil.tz.tzutc())
                         .timestamp(),
                     )
+                    r_c.set(
+                        redis_path_for_object_id_key(path_builder),
+                        folder_entry.object_id,
+                    )
             except boxsdk.exception.BoxAPIException as box_exc:
                 if box_exc.status == 404 and box_exc.code == "trashed":
                     crate_logger.debug(
                         f"Object {item.object_id=} was previously deleted from Box. "
                         f"{(path / item.name)=}"
                     )
+
+                    object_id_lookup = r_c.get(
+                        redis_path_for_object_id_key(path / item.name)
+                    )
+                    object_id_lookup = (
+                        str(object_id_lookup) if object_id_lookup else object_id_lookup
+                    )
+                    if object_id_lookup == item.object_id:
+                        r_c.delete(redis_path_for_object_id_key(path / item.name))
                     r_c.delete(redis_key(item.object_id))
                     r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
                 else:

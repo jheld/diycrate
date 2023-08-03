@@ -30,6 +30,7 @@ from .cache_utils import (
     r_c,
     local_or_box_file_m_time_key_func,
     redis_set,
+    redis_path_for_object_id_key,
 )
 from .item_queue_io import (
     UploadQueueItem,
@@ -111,7 +112,7 @@ class EventHandler(pyinotify.ProcessEvent):
             ]  # keep a local copy for this loop-run
             # operations list could have changed since the previous two instructions
             # pycharm complained that I was re-assigning the instance
-            # variable outside of the __init__.
+            # variable outside the __init__.
             self.operations.clear()
             self.operations.extend(
                 self.operations[cur_num_operations:]
@@ -659,7 +660,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 is_dir and entry["name"] == src_event.name and entry["type"] == "folder"
             )
             if did_find_src_file:
-                src_file = client.file(file_id=entry["id"]).get()
+                src_file: File = client.file(file_id=entry["id"]).get()
                 if is_rename:
                     last_modified_time = (
                         datetime.fromtimestamp(
@@ -682,25 +683,40 @@ class EventHandler(pyinotify.ProcessEvent):
                         .timestamp(),
                     )
                     src_file.rename(dest_event.name)
-                    file_obj = client.file(file_id=src_file.object_id).get()
+                    file_obj: File = client.file(file_id=src_file.object_id).get()
                     version_info["file_path"] = dest_event.pathname
                     version_info["etag"] = file_obj["etag"]
+                    r_c.set(
+                        redis_path_for_object_id_key(dest_event.pathname),
+                        src_file.object_id,
+                    )
+                    r_c.delete(
+                        redis_path_for_object_id_key(
+                            Path(src_event.path) / src_file.name
+                        )
+                    )
                     r_c.set(redis_key(src_file.object_id), json.dumps(version_info))
                     r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
                     path_builder = BOX_DIR
                     oauth = setup_remote_oauth(r_c, conf=conf_obj)
                     client = Client(oauth)
-                    for updated_entry in (
+                    parent_folders: list[Folder] = (
                         client.file(file_obj.object_id)
                         .get(fields=["path_collection"])
                         .path_collection["entries"]
-                    ):
+                    )
+                    for updated_entry in parent_folders:
                         if updated_entry.id == "0":
                             continue
                         path_builder /= updated_entry.name
-                        folder_entry = client.folder(updated_entry.id).get(
+                        folder_entry: Folder = client.folder(updated_entry.id).get(
                             fields=["modified_at"]
                         )
+                        if not r_c.exists(redis_path_for_object_id_key(path_builder)):
+                            r_c.set(
+                                redis_path_for_object_id_key(path_builder),
+                                updated_entry.object_id,
+                            )
                         r_c.set(
                             local_or_box_file_m_time_key_func(path_builder, True),
                             parse(folder_entry.modified_at)
@@ -713,9 +729,10 @@ class EventHandler(pyinotify.ProcessEvent):
                         dest_event.pathname
                     )  # should check box instead
                     cur_offset = 0
-                    for cur_entry in cur_box_folder.get_items(
-                        offset=cur_offset, limit=limit
-                    ):
+                    cur_box_folder_items: list[
+                        Union[File, Folder]
+                    ] = cur_box_folder.get_items(offset=cur_offset, limit=limit)
+                    for cur_entry in cur_box_folder_items:
                         matching_name = cur_entry["name"] == os.path.basename(
                             dest_event.pathname
                         )
@@ -1020,7 +1037,7 @@ class EventHandler(pyinotify.ProcessEvent):
             self.incoming_operations.put(
                 [event, "modify"]
             )  # "close"/"modify" seems appropriate
-            # allow moving from a ~.lock file...i guess that may be okay
+            # allow moving from a ~.lock file...I guess that may be okay
             crate_logger.debug("Moved to: {}".format(event.pathname))
 
     # noinspection PyPep8Naming,PyMethodMayBeStatic

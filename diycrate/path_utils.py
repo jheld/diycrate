@@ -31,6 +31,7 @@ from .cache_utils import (
     redis_set,
     redis_get,
     local_or_box_file_m_time_key_func,
+    redis_path_for_object_id_key,
 )
 from .iter_utils import SafeIter
 from .log_utils import setup_logger
@@ -143,6 +144,7 @@ def walk_and_notify_and_download_tree(
             local_or_box_file_m_time_key_func(path / box_item.name, True),
             parse(box_item.modified_at).astimezone(tzutc()).timestamp(),
         )
+        r_c.set(redis_path_for_object_id_key(path / box_item.name), box_item.object_id)
     if not local_only:
         redis_set(
             cache_client=r_c,

@@ -17,13 +17,18 @@ setup_logger()
 crate_logger = logging.getLogger(__name__)
 
 
-def redis_key(key):
+def redis_key(key: str) -> str:
     """
 
     :param key:
     :return:
     """
     return "diy_crate.version.{}".format(key)
+
+
+def redis_path_for_object_id_key(key: PathLike):
+    key_str = key.as_posix() if isinstance(key, Path) else key
+    return f"diy_crate.path_for_object_id:{key_str}"
 
 
 def redis_set(
@@ -81,12 +86,16 @@ def redis_set(
     cache_client.set(key, json.dumps(item_info))
     last_save_time_stamp = int(time.time())
     cache_client.set("diy_crate.last_save_time_stamp", last_save_time_stamp)
+    cache_client.set(
+        redis_path_for_object_id_key((path / cloud_item["name"])), cloud_item.object_id
+    )
+
     crate_logger.debug(f"Storing/updating info to redis:  {key=} {item_info=}")
     # assert redis_get(obj)
     return {key: item_info, "diy_crate.last_save_time_stamp": last_save_time_stamp}
 
 
-def redis_get(cache_client, obj):
+def redis_get(cache_client, obj: Union[File, Folder]):
     """
 
     :param cache_client:
@@ -104,6 +113,9 @@ def id_for_file_path(cache_client, file_path):
     :param file_path:
     :return:
     """
+    maybe_obj_id = cache_client.get(redis_path_for_object_id_key(file_path))
+    if maybe_obj_id:
+        return str(maybe_obj_id)
     for key in cache_client.keys("diy_crate.version.*"):
         value = json.loads(
             str(cache_client.get(key), encoding="utf-8", errors="strict")
