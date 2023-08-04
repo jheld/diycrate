@@ -18,6 +18,7 @@ from boxsdk.object.event import Event
 from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
 from dateutil.parser import parse
+from dateutil.tz import tzutc
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
 
@@ -113,7 +114,7 @@ def perform_upload(
                 if isinstance(item, File):
                     client = Client(oauth)
                     file_obj: File = client.file(file_id=item.object_id).get(
-                        fields=["path_collection", "name", "etag"]
+                        fields=["path_collection", "name", "etag", "modified_at"]
                     )
                     redis_set(r_c, file_obj, last_modified_time, box_dir_path=BOX_DIR)
                     r_c.set(
@@ -121,6 +122,10 @@ def perform_upload(
                         datetime.fromtimestamp(Path(path_name).stat().st_mtime)
                         .astimezone(dateutil.tz.tzutc())
                         .timestamp(),
+                    )
+                    r_c.set(
+                        local_or_box_file_m_time_key_func(path_name, True),
+                        parse(file_obj.modified_at).astimezone(tzutc()).timestamp(),
                     )
                     r_c.set(redis_path_for_object_id_key(path_name), item.object_id)
 
@@ -206,8 +211,14 @@ def download_queue_processor(queue_item: "DownloadQueueItem"):
                 f"ETAG {info['etag']} for {path=} is identical and file exists locally, "
                 f"will skip download."
             )
+        if info and info["etag"] > item["etag"] and os.path.exists(path):
+            crate_logger.debug(
+                f"ETAG {info['etag']} for {path=} is greater than the incoming data "
+                f"{item['etag']} and file exists locally, "
+                f"will skip download."
+            )
         # no version, or diff version, or the file does not exist locally
-        if not info or info["etag"] != item["etag"] or not os.path.exists(path):
+        elif not info or info["etag"] != item["etag"] or not os.path.exists(path):
             if info:
                 crate_logger.debug(
                     f"Preprocessing logic before download attempt. "

@@ -372,8 +372,9 @@ def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
 
 
 def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
-    obj_id = event["source"]["id"]
-    obj_type = event["source"]["type"]
+    event_source: Union[File, Folder] = event["source"]
+    obj_id = event_source["id"]
+    obj_type = event_source["type"]
     if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
         return
 
@@ -394,9 +395,7 @@ def process_item_upload_long_poll(client: Client, event: Union[Event, Mapping]):
             f"Submitting {path / event['source']['name']=} onto the download queue."
         )
         try:
-            box_file_for_download: File = client.file(file_id=obj_id).get(
-                fields=["modified_at", "etag", "name", "path_collection"]
-            )
+            box_file_for_download: File = event["source"]
             queue_item = DownloadQueueItem(
                 box_file_for_download,
                 path / event["source"]["name"],
@@ -882,7 +881,9 @@ def long_poll_event_listener(file_event_handler):
                 event_message = (
                     f"{event=} happened! {event.event_type=} "
                     f"{event.created_at=}, {event.event_id=}, "
-                    f"{getattr(event['source'], 'name', None)=}"
+                    f"{getattr(event['source'], 'name', None)=}, "
+                    f"{getattr(event['source'], 'etag', None)=}, "
+                    f"{getattr(event['source'], 'modified_at', None)=}"
                 )
                 crate_logger.debug(event_message)
                 process_long_poll_event(client, event)
