@@ -297,14 +297,26 @@ class EventHandler(pyinotify.ProcessEvent):
                 .astimezone(dateutil.tz.tzutc())
                 .timestamp()
             )
-            box_uploader: ChunkedUploader = cur_box_folder.get_chunked_uploader(
-                file_path.as_posix()
-            )
+            try:
+                box_uploader: ChunkedUploader = cur_box_folder.get_chunked_uploader(
+                    file_path.as_posix()
+                )
+                uploader_callable = partial(
+                    box_uploader.start,
+                )
+            except BoxAPIException as e:
+                if e.status == 400 and e.code == "file_size_too_small":
+                    uploader_callable = partial(
+                        cur_box_folder.upload,
+                        file_path.as_posix(),
+                        file_path.name,
+                        preflight_check=True,
+                    )
+                else:
+                    raise
             queue_item = UploadQueueItemReal(
                 last_modified_time,
-                partial(
-                    box_uploader.start,
-                ),
+                uploader_callable,
                 self.oauth,
                 file_path.as_posix(),
             )

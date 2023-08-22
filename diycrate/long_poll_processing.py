@@ -761,7 +761,7 @@ def get_sub_ids(box_id):
     return ids
 
 
-BOX_EVENT_IGNORED_TYPES = ["ITEM_PREVIEW"]
+BOX_EVENT_IGNORED_TYPES = ["ITEM_PREVIEW", "ITEM_DOWNLOAD"]
 
 
 class CustomBoxEvents(Events):
@@ -878,12 +878,16 @@ def long_poll_event_listener(file_event_handler):
                     continue
                 if r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
                     continue
+                ev_source = event["source"]
+                ev_src_name = getattr(ev_source, "name", None)
+                ev_src_etag = getattr(ev_source, "etag", None)
+                ev_src_modified_at = getattr(ev_source, "modified_at", None)
                 event_message = (
                     f"{event=} happened! {event.event_type=} "
                     f"{event.created_at=}, {event.event_id=}, "
-                    f"{getattr(event['source'], 'name', None)=}, "
-                    f"{getattr(event['source'], 'etag', None)=}, "
-                    f"{getattr(event['source'], 'modified_at', None)=}"
+                    f"{ev_src_name=}, "
+                    f"{ev_src_etag=}, "
+                    f"{ ev_src_modified_at=}"
                 )
                 crate_logger.debug(event_message)
                 process_long_poll_event(client, event)
