@@ -48,5 +48,6 @@ diycrate_server = "diycrate.server_app:main"
 
 [project.optional-dependencies]
 "dev" = ["ipython", "check-manifest", "black", "flake8", "pre-commit", "mypy"]
+"systemd" = ["systemd-python"]
 "ci" = ["python-digitalocean"]
 "test" = ["tox", "check-manifest"]
