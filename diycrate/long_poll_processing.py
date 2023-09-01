@@ -354,11 +354,25 @@ def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
             r_c.delete(redis_key(sub_box_id))
         r_c.delete(redis_key(obj_id))
         shutil.rmtree(file_path)
-        obj_cache_data = json.loads(str(r_c.get(redis_key(obj_id))))
+        obj_cache_data_raw = r_c.get(redis_key(obj_id))
+        obj_cache_data = (
+            json.loads(str(obj_cache_data_raw))
+            if obj_cache_data_raw is not None
+            else obj_cache_data_raw
+        )
         parent_id = obj_cache_data.get("parent_id") if obj_cache_data else None
         if parent_id:
-            parent_folder = json.loads(str(r_c.get(redis_key(parent_id))))
-            sub_ids = parent_folder.get("sub_ids", [])
+            parent_folder_raw = r_c.get(redis_key(parent_id))
+            parent_folder = (
+                json.loads(str(parent_folder_raw))
+                if parent_folder_raw is not None
+                else parent_folder_raw
+            )
+            sub_ids = (
+                parent_folder.get("sub_ids", [])
+                if parent_folder is not None
+                else parent_folder
+            )
             if sub_ids:
                 sub_ids.remove(obj_id)
                 r_c.set(redis_key(parent_id), json.dumps(parent_folder))
@@ -752,12 +766,14 @@ def get_sub_ids(box_id):
     sub_ids = item_info.get("sub_ids")
     sub_ids = sub_ids if sub_ids is not None else []
     for sub_id in sub_ids:
-        sub_item_info = json.loads(
-            str(r_c.get(redis_key(sub_id)), encoding="utf-8", errors="strict")
-        )
-        if os.path.isdir(sub_item_info["file_path"]):
-            ids.extend(get_sub_ids(sub_id))
-        ids.append(sub_id)
+        sub_id_cache_raw = r_c.get(redis_key(sub_id))
+        if sub_id_cache_raw is not None:
+            sub_item_info = json.loads(
+                str(sub_id_cache_raw, encoding="utf-8", errors="strict")
+            )
+            if os.path.isdir(sub_item_info["file_path"]):
+                ids.extend(get_sub_ids(sub_id))
+            ids.append(sub_id)
     return ids
 
 
@@ -882,12 +898,14 @@ def long_poll_event_listener(file_event_handler):
                 ev_src_name = getattr(ev_source, "name", None)
                 ev_src_etag = getattr(ev_source, "etag", None)
                 ev_src_modified_at = getattr(ev_source, "modified_at", None)
+                ev_src_id = getattr(ev_source, "id", None)
                 event_message = (
                     f"{event=} happened! {event.event_type=} "
                     f"{event.created_at=}, {event.event_id=}, "
                     f"{ev_src_name=}, "
                     f"{ev_src_etag=}, "
-                    f"{ ev_src_modified_at=}"
+                    f"{ev_src_modified_at=}, "
+                    f"{ev_src_id=}"
                 )
                 crate_logger.debug(event_message)
                 process_long_poll_event(client, event)
