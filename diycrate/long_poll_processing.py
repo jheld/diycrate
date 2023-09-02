@@ -689,7 +689,37 @@ def process_item_move_long_poll(event: Union[Event, Mapping]):
                 path = Path()
             path = BOX_DIR / path
             file_path = path / event["source"]["name"]
-            if src_file_path.exists():
+            if (
+                obj_type == "file"
+                and not src_file_path.exists()
+                and file_path.exists()
+                and item_info["etag"] != event["source"]["etag"]
+            ):
+                item_info["file_path"] = file_path.as_posix()
+                item_info["etag"] = event["source"]["etag"]
+                crate_logger.info(f"{event['source']['etag']=} updated.")
+                r_c.set(redis_key(obj_id), json.dumps(item_info))
+                r_c.setex(
+                    f"diy_crate:event_ids:{event.event_id}",
+                    timedelta(days=32),
+                    path.as_posix(),
+                )
+                time_data_map = {
+                    Path(file_path)
+                    .resolve()
+                    .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
+                    .astimezone(tzutc())
+                    .timestamp()
+                }
+                for mkey, mvalue in time_data_map.items():
+                    r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+                r_c.set(
+                    local_or_box_file_m_time_key_func(file_path, True),
+                    parse(event["source"]["modified_at"])
+                    .astimezone(tzutc())
+                    .timestamp(),
+                )
+            elif src_file_path.exists():
                 to_set = []
                 if obj_type == "folder":
                     for sub_id in get_sub_ids(obj_id):

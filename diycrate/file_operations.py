@@ -674,6 +674,7 @@ class EventHandler(pyinotify.ProcessEvent):
             if did_find_src_file:
                 src_file: File = client.file(file_id=entry["id"]).get()
                 if is_rename:
+                    crate_logger.debug(f"Processing as a rename {dest_event.pathname=}")
                     last_modified_time = (
                         datetime.fromtimestamp(
                             Path(dest_event.pathname).stat().st_mtime
@@ -737,6 +738,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         )
 
                 else:
+                    crate_logger.debug(f"Processing as a move {dest_event.pathname=}.")
                     did_find_cur_file = os.path.isdir(
                         dest_event.pathname
                     )  # should check box instead
@@ -755,6 +757,9 @@ class EventHandler(pyinotify.ProcessEvent):
                             is_dir and matching_name and isinstance(cur_entry, Folder)
                         )
                         if did_find_cur_file:
+                            crate_logger.info(
+                                f"Did find cur file (moving to {dest_event.pathname=})"
+                            )
                             queue_item = UploadQueueItemReal(
                                 datetime.fromtimestamp(
                                     Path(dest_event.pathname).stat().st_mtime
@@ -783,8 +788,63 @@ class EventHandler(pyinotify.ProcessEvent):
                                 "to update the contents"
                             )
                             break
-                    if is_file and not did_find_cur_file:
-                        src_file.move(cur_box_folder)
+                    if is_file and not did_find_cur_file and did_find_src_file:
+                        crate_logger.debug(
+                            f"Did not find cur file {dest_event.pathname=} "
+                            f"so we call Box API's src_file.move to cur box folder."
+                        )
+
+                        def complex_move():
+                            before_move_path_collection_entries = list(
+                                src_file.path_collection["entries"]
+                            )
+                            src_file_move_ret_value = src_file.move(cur_box_folder)
+
+                            # oauth = setup_remote_oauth(r_c, conf=conf_obj)
+                            # client = Client(oauth)
+                            def and_after():
+                                complex_path_builder = BOX_DIR
+                                for (
+                                    complex_entry
+                                ) in before_move_path_collection_entries:
+                                    if complex_entry.id == "0":
+                                        continue
+                                    complex_path_builder /= complex_entry.name
+                                    complex_folder_entry = client.folder(
+                                        complex_entry.id
+                                    ).get(fields=["modified_at"])
+                                    r_c.set(
+                                        local_or_box_file_m_time_key_func(
+                                            complex_path_builder, True
+                                        ),
+                                        parse(complex_folder_entry.modified_at)
+                                        .astimezone(dateutil.tz.tzutc())
+                                        .timestamp(),
+                                    )
+                                    r_c.set(
+                                        redis_path_for_object_id_key(
+                                            complex_path_builder
+                                        ),
+                                        complex_folder_entry.object_id,
+                                    )
+
+                            return src_file_move_ret_value, partial(and_after)
+
+                        queue_item = UploadQueueItemReal(
+                            datetime.fromtimestamp(
+                                Path(dest_event.pathname).stat().st_mtime
+                            )
+                            .astimezone(dateutil.tz.tzutc())
+                            .timestamp(),
+                            partial(complex_move),
+                            self.oauth,
+                            dest_event.pathname,
+                        )
+
+                        upload_pool_executor.apply_async(
+                            upload_queue_processor, kwds=dict(queue_item=queue_item)
+                        )
+                        # src_file.move(cur_box_folder)
                         # do not yet support moving and renaming in one go
                         assert src_file["name"] == dest_event.name
             elif did_find_src_folder:

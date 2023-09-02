@@ -105,6 +105,9 @@ def perform_upload(
                 f"Attempt upload{' ' + explicit_file_path if was_list else ''}"
             )
             ret_val = callable_up()
+            post_ret_callable = None
+            if isinstance(ret_val, tuple):
+                ret_val, post_ret_callable = ret_val
             crate_logger.info(
                 f"Completed upload{' ' + explicit_file_path if was_list else ''}"
             )
@@ -149,7 +152,8 @@ def perform_upload(
                             redis_path_for_object_id_key(path_builder),
                             folder_entry.object_id,
                         )
-
+                if isinstance(post_ret_callable, partial):
+                    post_ret_callable()
             break
         except BoxAPIException as e:
             crate_logger.info(f"{args}", exc_info=True)
