@@ -350,7 +350,8 @@ def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
                 cur_sub_box_item_info = json.loads(
                     str(cur_sub_box_redis_data, encoding="utf-8", errors="strict")
                 )
-                r_c.delete(cur_sub_box_item_info["file_name"])
+                if cur_sub_box_item_info:
+                    r_c.delete(cur_sub_box_item_info["file_path"])
             r_c.delete(redis_key(sub_box_id))
         r_c.delete(redis_key(obj_id))
         shutil.rmtree(file_path)
