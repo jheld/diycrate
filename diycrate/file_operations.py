@@ -298,6 +298,8 @@ class EventHandler(pyinotify.ProcessEvent):
                 .timestamp()
             )
             try:
+                if file_path.stat().st_size < 20000000:
+                    raise BoxAPIException(code="file_size_too_small", status=400)
                 box_uploader: ChunkedUploader = cur_box_folder.get_chunked_uploader(
                     file_path.as_posix()
                 )
@@ -311,6 +313,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         file_path.as_posix(),
                         file_path.name,
                         preflight_check=True,
+                        upload_using_accelerator=True,
                     )
                 else:
                     raise
@@ -475,7 +478,13 @@ class EventHandler(pyinotify.ProcessEvent):
                 datetime.fromtimestamp(last_modified_time)
                 .astimezone(dateutil.tz.tzutc())
                 .timestamp(),
-                partial(cur_box_folder.upload, file_path.as_posix(), file_path.name),
+                partial(
+                    cur_box_folder.upload,
+                    file_path.as_posix(),
+                    file_path.name,
+                    preflight_check=True,
+                    upload_using_accelerator=True,
+                ),
                 self.oauth,
                 file_path.as_posix(),
             )
@@ -602,6 +611,8 @@ class EventHandler(pyinotify.ProcessEvent):
                     cur_box_folder.upload,
                     event.pathname,
                     os.path.basename(event.pathname),
+                    preflight_check=True,
+                    upload_using_accelerator=True,
                 ),
                 self.oauth,
                 event.pathname,
@@ -936,6 +947,8 @@ class EventHandler(pyinotify.ProcessEvent):
                             cur_box_folder.upload,
                             dest_event.pathname,
                             os.path.basename(dest_event.pathname),
+                            preflight_check=True,
+                            upload_using_accelerator=True,
                         ),
                         self.oauth,
                         dest_event.pathname,
