@@ -17,6 +17,7 @@ from boxsdk.exception import BoxAPIException
 from boxsdk.object.event import Event
 from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
+from boxsdk.object.user import User
 from dateutil.parser import parse
 from dateutil.tz import tzutc
 from requests.exceptions import ConnectionError
@@ -109,13 +110,13 @@ def perform_upload(
             if isinstance(ret_val, tuple):
                 ret_val, post_ret_callable = ret_val
             crate_logger.info(
-                f"Completed upload{' ' + explicit_file_path if was_list else ''}"
+                f"Completed upload/operation/{' ' + explicit_file_path if was_list else ''}"
             )
             if was_list:
                 path_name = explicit_file_path
                 item = ret_val  # is the new/updated item
+                client = Client(oauth)
                 if isinstance(item, File):
-                    client = Client(oauth)
                     file_obj: File = client.file(file_id=item.object_id).get(
                         fields=["path_collection", "name", "etag", "modified_at"]
                     )
@@ -154,6 +155,14 @@ def perform_upload(
                         )
                 if isinstance(post_ret_callable, partial):
                     post_ret_callable()
+                user_resource: User = client.user()
+                user: User = user_resource.get(fields=["space_used", "space_amount"])
+                crate_logger.debug(
+                    "User space used/amount:  %d%% -> (used: %dGiB, total: %dGiB)",
+                    (user.space_used / user.space_amount) * 100,
+                    user.space_used / 1024 / 1024 / 1024,
+                    user.space_amount / 1024 / 1024 / 1024,
+                )
             break
         except BoxAPIException as e:
             crate_logger.info(f"{args}", exc_info=True)

@@ -7,6 +7,7 @@ from os import PathLike
 from pathlib import Path
 from typing import Union, Optional, Dict, List
 
+from boxsdk.object.user import User
 from dateutil.tz import tzutc
 from bottle import Bottle
 from boxsdk import OAuth2
@@ -75,6 +76,14 @@ def walk_and_notify_and_download_tree(
     if Path(path) == BOX_DIR:
         for mkey, mvalue in time_data_map.items():
             r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
+        user_resource: User = client.user()
+        user: User = user_resource.get(fields=["space_used", "space_amount"])
+        crate_logger.info(
+            "Walking in root dir, user space used/amount:  %d%% -> (used: %dGiB, total: %dGiB)",
+            (user.space_used / user.space_amount) * 100,
+            user.space_used / 1024 / 1024 / 1024,
+            user.space_amount / 1024 / 1024 / 1024,
+        )
     while True:
         try:
             basic_folder_keys = ["id", "etag", "name", "path_collection", "modified_at"]
