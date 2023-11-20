@@ -1,5 +1,6 @@
 import webbrowser
 from configparser import ConfigParser
+import sys
 from typing import Union
 
 import httpx
@@ -8,6 +9,7 @@ from boxsdk import OAuth2
 from boxsdk.auth import RemoteOAuth2
 
 from .cache_utils import r_c
+from .gui import notify_user_with_gui
 
 import logging
 
@@ -60,13 +62,23 @@ def get_access_token(access_token):
     if isinstance(refresh_token, bytes):
         refresh_token = refresh_token.decode(encoding="utf-8")
 
-    access_token, refresh_token = httpx.post(
+    response = httpx.post(
         remote_url,
         data={"refresh_token": refresh_token, "access_token": access_token},
         verify=True,
-    ).json()
-    r_c.set("diy_crate.auth.access_token", access_token)
-    r_c.set("diy_crate.auth.refresh_token", refresh_token)
+    )
+    try:
+        access_token, refresh_token = response.json()
+    except ValueError:
+        response_error_body = response.content.decode()
+        crate_logger.warn("Error on response: %s", response_error_body)
+        notify_user_with_gui("Error retrieving new token", "Will clear out.")
+        if r_c.exists("diy_crate.auth.access_token") and r_c.exists(
+            "diy_crate.auth.refresh_token"
+        ):
+            r_c.delete("diy_crate.auth.access_token", "diy_crate.auth.refresh_token")
+        sys.exit(1)
+
     crate_logger.debug(
         f"new access_token: {access_token}, refresh_token: {refresh_token}"
     )
