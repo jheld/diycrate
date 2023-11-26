@@ -2,6 +2,7 @@ import configparser
 import json
 import os
 import queue
+import sys
 import threading
 import logging
 import time
@@ -10,6 +11,7 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import Union, List, Dict, Optional
+import typing
 
 import boxsdk.object.file
 import dateutil
@@ -40,7 +42,7 @@ from .item_queue_io import (
 )
 from .iter_utils import SafeIter
 from .log_utils import setup_logger
-from .oauth_utils import setup_remote_oauth
+from .oauth_utils import get_access_token, setup_remote_oauth
 
 setup_logger()
 
@@ -722,7 +724,9 @@ class EventHandler(pyinotify.ProcessEvent):
                     r_c.set(redis_key(src_file.object_id), json.dumps(version_info))
                     r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
                     path_builder = BOX_DIR
-                    oauth = setup_remote_oauth(r_c, conf=conf_obj)
+                    oauth = setup_remote_oauth(
+                        r_c, conf=conf_obj, bottle_app=self.bottle_app
+                    )
                     client = Client(oauth)
                     parent_folders: list[Folder] = (
                         client.file(file_obj.object_id)
@@ -1151,7 +1155,7 @@ class EventHandler(pyinotify.ProcessEvent):
 
 def get_box_folder(
     client: Client, cur_box_folder: Optional[Folder], folder_id: str, retry_limit: int
-):
+) -> Folder:
     """
 
     :param client:
@@ -1162,15 +1166,30 @@ def get_box_folder(
     """
     for i in range(retry_limit):
         try:
-            box_folder = client.folder(folder_id=folder_id).get()
+            box_folder_skeleton: Folder = typing.cast(
+                Folder, client.folder(folder_id=folder_id)
+            )
+            box_folder: Folder = typing.cast(Folder, box_folder_skeleton.get())
             cur_box_folder = box_folder
             break
+        except BoxAPIException as e:
+            get_access_token(
+                client.auth._access_token, bottle_app=None, oauth=client.auth
+            )
+            if i == retry_limit - 1:
+                crate_logger.info("Bad box api response.", exc_info=e)
+                if r_c.exists("diy_crate.auth.access_token") and r_c.exists(
+                    "diy_crate.auth.refresh_token"
+                ):
+                    r_c.delete(
+                        "diy_crate.auth.access_token", "diy_crate.auth.refresh_token"
+                    )
+                sys.exit(1)
         except (
             ConnectionError,
             BrokenPipeError,
             ProtocolError,
             ConnectionResetError,
-            BoxAPIException,
         ):
             if i + 1 >= retry_limit:
                 crate_logger.warning(

@@ -38,6 +38,7 @@ from diycrate.item_queue_io import (
     download_queue_processor,
 )
 from diycrate.log_utils import setup_logger
+from diycrate.oauth_utils import get_access_token
 
 setup_logger()
 
@@ -948,7 +949,12 @@ def long_poll_event_listener(file_event_handler):
                     timedelta(days=32),
                     str(next_stream_position),
                 )
-        except (exception.BoxAPIException, AttributeError):
+        except exception.BoxAPIException as e:
+            crate_logger.warning("Box or AttributeError occurred.", exc_info=e)
+            get_access_token(
+                client.auth._access_token, bottle_app=None, oauth=client.auth
+            )
+        except (AttributeError):
             crate_logger.warning("Box or AttributeError occurred.", exc_info=True)
         except Exception:
             crate_logger.warning("General error occurred.", exc_info=True)

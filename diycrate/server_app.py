@@ -5,9 +5,11 @@ import logging
 from pathlib import Path
 
 import bottle
-from bottle import ServerAdapter
+from bottle import ServerAdapter, response
+import boxsdk
 from cheroot.wsgi import Server
 from cheroot.ssl.builtin import BuiltinSSLAdapter
+from diycrate import utils
 
 from diycrate.cache_utils import r_c
 from diycrate.oauth_utils import setup_oauth, store_tokens_callback
@@ -21,7 +23,7 @@ crate_logger = logging.getLogger(__name__)
 
 cloud_provider_name = "Box"
 
-bottle_app = bottle.Bottle()
+bottle_app = utils.Bottle()
 
 
 @bottle_app.route("/auth_url")
@@ -71,15 +73,24 @@ def new_access():
     refresh_token = bottle.request.POST.get("refresh_token")
     bottle_app.oauth._access_token = str(access_token_to_refresh)
     bottle_app.oauth._refresh_token = str(refresh_token)
-    refresh_response = bottle_app.oauth.refresh(access_token_to_refresh)
-    str_response = [
-        el.decode(encoding="utf-8", errors="strict") if isinstance(el, bytes) else el
-        for el in refresh_response
-    ]
-    # we've done the work, so let's wipe the temporary state adjustment clean
-    bottle_app.oauth._access_token = None
-    bottle_app.oauth._refresh_token = None
-    return json.dumps(str_response)
+    try:
+        refresh_response = bottle_app.oauth.refresh(access_token_to_refresh)
+        str_response = [
+            el.decode(encoding="utf-8", errors="strict")
+            if isinstance(el, bytes)
+            else el
+            for el in refresh_response
+        ]
+        # we've done the work, so let's wipe the temporary state adjustment clean
+        bottle_app.oauth._access_token = None
+        bottle_app.oauth._refresh_token = None
+        return json.dumps(str_response)
+    except boxsdk.exception.BoxOAuthException as e:
+        # we've done the work, so let's wipe the temporary state adjustment clean
+        bottle_app.oauth._access_token = None
+        bottle_app.oauth._refresh_token = None
+        response.status = e.status
+        return json.dumps(e.message)
 
 
 # Create our own sub-class of Bottle's ServerAdapter

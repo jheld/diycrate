@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import logging
 from datetime import timedelta, datetime
@@ -9,13 +10,15 @@ from typing import Union, Optional, Dict, List
 
 from boxsdk.object.user import User
 from dateutil.tz import tzutc
-from bottle import Bottle
 from boxsdk import OAuth2
 from boxsdk.exception import BoxAPIException
 from boxsdk.client import Client
 from boxsdk.object.file import File
 from boxsdk.object.folder import Folder
 from dateutil.parser import parse
+
+from diycrate.oauth_utils import get_access_token
+from diycrate.utils import Bottle
 
 from .file_operations import wm, BOX_DIR, path_time_recurse_func
 from .item_queue_io import (
@@ -77,7 +80,24 @@ def walk_and_notify_and_download_tree(
         for mkey, mvalue in time_data_map.items():
             r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
         user_resource: User = client.user()
-        user: User = user_resource.get(fields=["space_used", "space_amount"])
+        i_limit = 5
+        for i in range(i_limit):
+            try:
+                user: User = user_resource.get(fields=["space_used", "space_amount"])
+                break
+            except BoxAPIException as e:
+                get_access_token(client.auth._access_token, bottle_app=bottle_app)
+                if i == i_limit - 1:
+                    crate_logger.warn("Bad box api response.", exc_info=e)
+                    if r_c.exists("diy_crate.auth.access_token") and r_c.exists(
+                        "diy_crate.auth.refresh_token"
+                    ):
+                        r_c.delete(
+                            "diy_crate.auth.access_token",
+                            "diy_crate.auth.refresh_token",
+                        )
+                    sys.exit(1)
+
         crate_logger.info(
             "Walking in root dir, user space used/amount:  %d%% -> (used: %dGiB, total: %dGiB)",
             (user.space_used / user.space_amount) * 100,

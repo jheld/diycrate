@@ -2,16 +2,17 @@ import argparse
 import configparser
 import logging
 import os
+import sys
 import threading
 import time
 from pathlib import Path
-from typing import Union, Optional
+from typing import List, Union, Optional
 
 import bottle
 import httpx
 import pyinotify
 from bottle import ServerAdapter
-from boxsdk import Client, exception, OAuth2
+from boxsdk import BoxAPIException, Client, exception, OAuth2
 from boxsdk.auth import RemoteOAuth2
 from cheroot import wsgi as wsgiserver
 from cheroot.ssl.builtin import BuiltinSSLAdapter
@@ -30,6 +31,7 @@ from diycrate.oauth_utils import store_tokens_callback, setup_remote_oauth, oaut
 from diycrate.path_utils import re_walk
 
 from diycrate.log_utils import setup_logger
+from diycrate.utils import Bottle
 
 setup_logger()
 
@@ -37,7 +39,8 @@ crate_logger = logging.getLogger(__name__)
 
 cloud_provider_name = "Box"
 
-bottle_app = bottle.Bottle()
+
+bottle_app = Bottle()
 
 # The watch manager stores the watches and provides operations on watches
 
@@ -137,6 +140,35 @@ def start_cloud_threads(client_oauth):
     while not failed:
         try:
             box_folder = client.folder(folder_id="0").get()
+        except BoxAPIException as e:
+            crate_logger.info("Bad box api response.", exc_info=e)
+            remote_url = conf_obj["box"]["token_url"]
+            if client.auth._refresh_token or client.auth._access_token:
+                response = httpx.post(
+                    remote_url,
+                    data={
+                        "refresh_token": client.auth._refresh_token,
+                        "access_token": client.auth._access_token,
+                    },
+                    verify=True,
+                )
+            else:
+                response = None
+            if not response or response.status_code > 399:
+                if r_c.exists("diy_crate.auth.access_token") and r_c.exists(
+                    "diy_crate.auth.refresh_token"
+                ):
+                    r_c.delete(
+                        "diy_crate.auth.access_token", "diy_crate.auth.refresh_token"
+                    )
+                    sys.exit(1)
+            else:
+                response_json: List[str] = response.json()
+                access_token_resolved, refresh_token = response_json
+                r_c.set("diy_crate.auth.access_token", access_token_resolved)
+                r_c.set("diy_crate.auth.refresh_token", refresh_token)
+                client.auth._update_current_tokens(access_token_resolved, refresh_token)
+
         except Exception:
             crate_logger.warning(
                 "Encountered error getting root box folder", exc_info=True
@@ -311,7 +343,7 @@ def main():
         oauth = bottle_app.oauth
     else:
         try:
-            oauth = setup_remote_oauth(r_c, conf=conf_obj)
+            oauth = setup_remote_oauth(r_c, conf=conf_obj, bottle_app=bottle_app)
             start_cloud_threads(oauth)
             bottle_app.started_cloud_threads = True
         except exception.BoxOAuthException:
@@ -328,6 +360,10 @@ def main():
     # notifier_thread.start()
     if bottle_thread and not bottle_thread.is_alive():
         bottle_thread.start()
+
+    while threading.active_count() > 1:
+        time.sleep(0.1)
+    notifier.stop()
 
 
 if __name__ == "__main__":

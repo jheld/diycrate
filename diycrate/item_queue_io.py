@@ -253,7 +253,7 @@ def download_queue_processor(queue_item: "DownloadQueueItem"):
         )
 
 
-def perform_download(item: File, path: Union[str, Path], retry_limit=15):
+def perform_download(item: File | Folder, path: Union[str, Path], retry_limit=15):
     if isinstance(path, str):
         path = Path(path)
     for i in range(retry_limit):
