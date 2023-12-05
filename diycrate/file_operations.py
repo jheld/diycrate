@@ -2,7 +2,6 @@ import configparser
 import json
 import os
 import queue
-import sys
 import threading
 import logging
 import time
@@ -10,8 +9,9 @@ from datetime import timedelta
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Union, List, Dict, Optional
+from typing import Union, List, Dict
 import typing
+
 
 import boxsdk.object.file
 import dateutil
@@ -25,6 +25,8 @@ from dateutil import tz
 from dateutil.parser import parse
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
+
+from diycrate.utils import Bottle
 
 from .cache_utils import (
     redis_key,
@@ -252,8 +254,7 @@ class EventHandler(pyinotify.ProcessEvent):
         crate_logger.debug(f"Real close...: {file_path.as_posix()}")
         folders_to_traverse = self.folders_to_traverse(file_path.parent.as_posix())
         client = Client(self.oauth)
-        cur_box_folder = None
-        cur_box_folder = get_box_folder(client, cur_box_folder, "0", 5)
+        cur_box_folder = get_box_folder(client, "0", 5, bottle_app=self.bottle_app)
         # if we're modifying in root box dir, then we've already found the folder
         try:
             is_base = any(
@@ -358,10 +359,12 @@ class EventHandler(pyinotify.ProcessEvent):
             pass
         folders_to_traverse = self.folders_to_traverse(file_path.parent.as_posix())
         client = Client(self.oauth)
-        cur_box_folder = None
+
         folder_id = "0"
         retry_limit = 5
-        cur_box_folder = get_box_folder(client, cur_box_folder, folder_id, retry_limit)
+        cur_box_folder = get_box_folder(
+            client, folder_id, retry_limit, bottle_app=self.bottle_app
+        )
         # if we're modifying in root box dir, then we've already found the folder
         try:
             is_base = any(
@@ -512,13 +515,21 @@ class EventHandler(pyinotify.ProcessEvent):
         folders_to_traverse = self.folders_to_traverse(event.path)
         client = Client(self.oauth)
         failed = False
-        box_folder = None
+        box_folder: Union[Folder, None] = None
+        loop_index = 0
         while not failed:
             try:
-                box_folder = client.folder(folder_id="0").get()
+                box_folder = typing.cast(Folder, client.folder(folder_id="0").get())  # type: ignore
+            except BoxAPIException as e:
+                crate_logger.warning("Error getting box root folder.", exc_info=e)
+                get_access_token(client.auth.access_token, bottle_app=self.bottle_app)
+                client._auth = self.bottle_app.oauth
+                time.sleep(min([pow(2, loop_index), 8]))
+                loop_index += 1
             except Exception:
                 crate_logger.warning("Error getting box root folder.", exc_info=True)
-                time.sleep(2)
+                time.sleep(min([pow(2, loop_index), 8]))
+                loop_index += 1
             else:
                 failed = True
         cur_box_folder = box_folder
@@ -978,12 +989,14 @@ class EventHandler(pyinotify.ProcessEvent):
         client = Client(self.oauth)
         failed = False
         box_folder = None
+        loop_index = 0
         while not failed:
             try:
                 box_folder = client.folder(folder_id="0").get()
             except Exception:
                 crate_logger.warning("Error getting box root folder.", exc_info=True)
-                time.sleep(2)
+                time.sleep(min([pow(2, loop_index), 8]))
+                loop_index += 1
             else:
                 failed = True
         cur_box_folder = box_folder
@@ -1154,7 +1167,10 @@ class EventHandler(pyinotify.ProcessEvent):
 
 
 def get_box_folder(
-    client: Client, cur_box_folder: Optional[Folder], folder_id: str, retry_limit: int
+    client: Client,
+    folder_id: str,
+    retry_limit: int,
+    bottle_app: Union[Bottle, None] = None,
 ) -> Folder:
     """
 
@@ -1164,6 +1180,7 @@ def get_box_folder(
     :param retry_limit:
     :return:
     """
+    cur_box_folder: Folder
     for i in range(retry_limit):
         try:
             box_folder_skeleton: Folder = typing.cast(
@@ -1173,24 +1190,18 @@ def get_box_folder(
             cur_box_folder = box_folder
             break
         except BoxAPIException as e:
-            get_access_token(
-                client.auth._access_token, bottle_app=None, oauth=client.auth
-            )
+            get_access_token(client.auth._access_token, bottle_app=bottle_app)
+            if bottle_app:
+                client._auth = bottle_app.oauth
             if i == retry_limit - 1:
                 crate_logger.info("Bad box api response.", exc_info=e)
-                if r_c.exists("diy_crate.auth.access_token") and r_c.exists(
-                    "diy_crate.auth.refresh_token"
-                ):
-                    r_c.delete(
-                        "diy_crate.auth.access_token", "diy_crate.auth.refresh_token"
-                    )
-                sys.exit(1)
+                raise e
         except (
             ConnectionError,
             BrokenPipeError,
             ProtocolError,
             ConnectionResetError,
-        ):
+        ) as e:
             if i + 1 >= retry_limit:
                 crate_logger.warning(
                     "Attempt ({retry_count}) out of ({max_count}); Going to give "
@@ -1199,13 +1210,14 @@ def get_box_folder(
                     ),
                     exc_info=True,
                 )
+                raise e
             else:
                 crate_logger.warning(
                     "Attempt ({retry_count}) "
                     "out of ({max_count})".format(retry_count=i, max_count=retry_limit),
                     exc_info=True,
                 )
-    return cur_box_folder
+    return cur_box_folder  # type: ignore[reportUnboundVariable]
 
 
 def path_time_recurse_func(

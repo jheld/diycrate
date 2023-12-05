@@ -3,6 +3,7 @@ import configparser
 import json
 import logging
 from pathlib import Path
+import typing
 
 import bottle
 from bottle import ServerAdapter, response
@@ -35,10 +36,9 @@ def auth_url():
     crate_logger.info("auth url retrieved.")
 
     bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
+    request = typing.cast(utils.LocalRequest, bottle.request)
     return json.dumps(
-        bottle_app.oauth.get_authorization_url(
-            redirect_url=bottle.request.query.redirect_url
-        )
+        bottle_app.oauth.get_authorization_url(redirect_url=request.query.redirect_url)
     )
 
 
@@ -50,7 +50,8 @@ def authenticate_url():
     """
     crate_logger.info("authentication flow initiated.")
     bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
-    auth_code = bottle.request.POST.get("code")
+    request = typing.cast(utils.LocalRequest, bottle.request)
+    auth_code = request.POST.get("code")
     return json.dumps(
         [
             el.decode(encoding="utf-8", errors="strict")
@@ -69,10 +70,12 @@ def new_access():
     """
     crate_logger.info("generating an access token.")
     bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
-    access_token_to_refresh = bottle.request.POST.get("access_token")
-    refresh_token = bottle.request.POST.get("refresh_token")
-    bottle_app.oauth._access_token = str(access_token_to_refresh)
-    bottle_app.oauth._refresh_token = str(refresh_token)
+    request = typing.cast(utils.LocalRequest, bottle.request)
+    access_token_to_refresh = request.POST.get("access_token")
+    refresh_token = request.POST.get("refresh_token")
+    bottle_app.oauth._update_current_tokens(
+        str(access_token_to_refresh), str(refresh_token)
+    )
     try:
         refresh_response = bottle_app.oauth.refresh(access_token_to_refresh)
         str_response = [
@@ -82,13 +85,11 @@ def new_access():
             for el in refresh_response
         ]
         # we've done the work, so let's wipe the temporary state adjustment clean
-        bottle_app.oauth._access_token = None
-        bottle_app.oauth._refresh_token = None
+        bottle_app.oauth._update_current_tokens(None, None)
         return json.dumps(str_response)
     except boxsdk.exception.BoxOAuthException as e:
         # we've done the work, so let's wipe the temporary state adjustment clean
-        bottle_app.oauth._access_token = None
-        bottle_app.oauth._refresh_token = None
+        bottle_app.oauth._update_current_tokens(None, None)
         response.status = e.status
         return json.dumps(e.message)
 

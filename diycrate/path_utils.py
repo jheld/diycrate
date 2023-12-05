@@ -1,5 +1,4 @@
 import os
-import sys
 import time
 import logging
 from datetime import timedelta, datetime
@@ -7,6 +6,7 @@ from functools import partial
 from os import PathLike
 from pathlib import Path
 from typing import Union, Optional, Dict, List
+import typing
 
 from boxsdk.object.user import User
 from dateutil.tz import tzutc
@@ -20,7 +20,7 @@ from dateutil.parser import parse
 from diycrate.oauth_utils import get_access_token
 from diycrate.utils import Bottle
 
-from .file_operations import wm, BOX_DIR, path_time_recurse_func
+from .file_operations import EventHandler, wm, BOX_DIR, path_time_recurse_func
 from .item_queue_io import (
     DownloadQueueItem,
     UploadQueueItem,
@@ -79,24 +79,22 @@ def walk_and_notify_and_download_tree(
     if Path(path) == BOX_DIR:
         for mkey, mvalue in time_data_map.items():
             r_c.set(local_or_box_file_m_time_key_func(mkey, False), mvalue)
-        user_resource: User = client.user()
+        user_resource: User = typing.cast(User, client.user())
         i_limit = 5
         for i in range(i_limit):
             try:
-                user: User = user_resource.get(fields=["space_used", "space_amount"])
+                u_fields = ["space_used", "space_amount"]
+                user: User = typing.cast(User, user_resource.get(fields=u_fields))  # type: ignore
                 break
             except BoxAPIException as e:
                 get_access_token(client.auth._access_token, bottle_app=bottle_app)
+                client = oauth_setup_within_directory_walk(bottle_app.oauth)
+                user_resource = typing.cast(User, client.user())
                 if i == i_limit - 1:
                     crate_logger.warn("Bad box api response.", exc_info=e)
-                    if r_c.exists("diy_crate.auth.access_token") and r_c.exists(
-                        "diy_crate.auth.refresh_token"
-                    ):
-                        r_c.delete(
-                            "diy_crate.auth.access_token",
-                            "diy_crate.auth.refresh_token",
-                        )
-                    sys.exit(1)
+                    raise e
+                else:
+                    time.sleep(min([pow(2, i), 8]))
 
         crate_logger.info(
             "Walking in root dir, user space used/amount:  %d%% -> (used: %dGiB, total: %dGiB)",
@@ -549,7 +547,13 @@ def local_files_walk_pre_process(
     )
 
 
-def re_walk(path, box_folder, oauth_obj, bottle_app: Bottle, file_event_handler=None):
+def re_walk(
+    path: PathLike,
+    box_folder: Folder,
+    oauth_obj: OAuth2,
+    bottle_app: Bottle,
+    file_event_handler: Union[EventHandler, None] = None,
+):
     """
 
     :param path:

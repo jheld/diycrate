@@ -31,6 +31,7 @@ from diycrate.cache_utils import (
     local_or_box_file_m_time_key_func,
     redis_path_for_object_id_key,
 )
+from diycrate.file_operations import EventHandler
 from diycrate.gui import notify_user_with_gui
 from diycrate.item_queue_io import (
     DownloadQueueItem,
@@ -39,6 +40,7 @@ from diycrate.item_queue_io import (
 )
 from diycrate.log_utils import setup_logger
 from diycrate.oauth_utils import get_access_token
+from diycrate.utils import Bottle
 
 setup_logger()
 
@@ -884,11 +886,12 @@ class CustomBoxClient(Client):
         return CustomBoxEvents(self._session)
 
 
-def long_poll_event_listener(file_event_handler):
+def long_poll_event_listener(file_event_handler: EventHandler, bottle_app: Bottle):
     """
     Receive and process remote cloud item events in real-time
     :return:
     """
+    global oauth
     handler = file_event_handler
     client = CustomBoxClient(oauth=handler.oauth)
     long_poll_streamer = client.events()
@@ -907,7 +910,7 @@ def long_poll_event_listener(file_event_handler):
 
             else:
                 crate_logger.info("About to get latest stream position.")
-                stream_position = long_poll_streamer.get_latest_stream_position()
+                stream_position = long_poll_streamer.get_latest_stream_position()  # type: ignore
                 crate_logger.debug(
                     f"Using as latest stream position: {str(stream_position)=}"
                 )
@@ -951,9 +954,8 @@ def long_poll_event_listener(file_event_handler):
                 )
         except exception.BoxAPIException as e:
             crate_logger.warning("Box or AttributeError occurred.", exc_info=e)
-            get_access_token(
-                client.auth._access_token, bottle_app=None, oauth=client.auth
-            )
+            get_access_token(client.auth._access_token, bottle_app=bottle_app)
+            client.auth._update_current_tokens(oauth.access_token, oauth._refresh_token)
         except (AttributeError):
             crate_logger.warning("Box or AttributeError occurred.", exc_info=True)
         except Exception:

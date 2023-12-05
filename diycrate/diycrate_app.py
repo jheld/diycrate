@@ -2,20 +2,21 @@ import argparse
 import configparser
 import logging
 import os
-import sys
 import threading
 import time
 from pathlib import Path
-from typing import List, Union, Optional
+from typing import Union
+import typing
 
 import bottle
+from boxsdk.object.folder import Folder
 import httpx
 import pyinotify
 from bottle import ServerAdapter
-from boxsdk import BoxAPIException, Client, exception, OAuth2
-from boxsdk.auth import RemoteOAuth2
+from boxsdk import BoxAPIException, Client, exception
 from cheroot import wsgi as wsgiserver
 from cheroot.ssl.builtin import BuiltinSSLAdapter
+import cherrypy
 
 from diycrate.cache_utils import r_c
 from diycrate.file_operations import (
@@ -27,11 +28,16 @@ from diycrate.file_operations import (
 )
 
 from diycrate.long_poll_processing import long_poll_event_listener
-from diycrate.oauth_utils import store_tokens_callback, setup_remote_oauth, oauth_dance
+from diycrate.oauth_utils import (
+    get_access_token,
+    store_tokens_callback,
+    setup_remote_oauth,
+    oauth_dance,
+)
 from diycrate.path_utils import re_walk
 
 from diycrate.log_utils import setup_logger
-from diycrate.utils import Bottle
+from diycrate.utils import Bottle, LocalRequest
 
 setup_logger()
 
@@ -39,8 +45,9 @@ crate_logger = logging.getLogger(__name__)
 
 cloud_provider_name = "Box"
 
-
 bottle_app = Bottle()
+bottle_app.processing_oauth_browser_lock = threading.Lock()
+bottle_app.processing_oauth_refresh_lock = threading.Lock()
 
 # The watch manager stores the watches and provides operations on watches
 
@@ -78,7 +85,6 @@ walk_thread.daemon = True
 #     r_c.delete('diy_crate.auth.refresh_token', 'diy_crate.auth.access_token')
 #     return 'OK'
 
-oauth: Optional[Union[RemoteOAuth2, OAuth2]] = None
 conf_obj = configparser.ConfigParser()
 
 
@@ -97,29 +103,33 @@ def oauth_handler():
     RESTful end-point for the oauth handling
     :return:
     """
-    assert bottle_app.csrf_token == bottle.request.GET["state"]
+    request = typing.cast(LocalRequest, bottle.request)
+    assert bottle_app.csrf_token == request.GET["state"]
     access_token, refresh_token = httpx.post(
         conf_obj["box"]["authenticate_url"],
-        data={"code": bottle.request.GET["code"]},
+        data={"code": request.GET["code"]},
         verify=True,
     ).json()
     store_tokens_callback(access_token, refresh_token)
     bottle_app.oauth._update_current_tokens(access_token, refresh_token)
     if not getattr(bottle_app, "started_cloud_threads", False):
-        start_cloud_threads(bottle_app.oauth)
+        start_cloud_threads()
         bottle_app.started_cloud_threads = True
+    bottle_app.processing_oauth_browser = False
+    bottle_app.processing_oauth_browser_lock.release()
     return "OK"
 
 
-def start_cloud_threads(client_oauth):
+def start_cloud_threads():
     """
 
     :param client_oauth:
     :return:
     """
-    client = Client(client_oauth)
-    handler.oauth = client_oauth
-    bottle_app.oauth = client_oauth
+    global oauth
+    client = Client(oauth)
+    handler.oauth = oauth
+    bottle_app.oauth = oauth
     wm.add_watch(BOX_DIR.as_posix(), mask, rec=True, auto_add=True)
     client.auth._access_token = r_c.get("diy_crate.auth.access_token")
     client.auth._refresh_token = r_c.get("diy_crate.auth.refresh_token")
@@ -136,44 +146,24 @@ def start_cloud_threads(client_oauth):
             else client.auth._refresh_token
         )
     failed = False
-    box_folder = None
+    box_folder: Union[Folder, None] = None
+    loop_index = 0
     while not failed:
         try:
-            box_folder = client.folder(folder_id="0").get()
+            box_folder_initial = typing.cast(Folder, client.folder(folder_id="0"))
+            box_folder = typing.cast(Folder, box_folder_initial.get())  # type: ignore
         except BoxAPIException as e:
             crate_logger.info("Bad box api response.", exc_info=e)
-            remote_url = conf_obj["box"]["token_url"]
-            if client.auth._refresh_token or client.auth._access_token:
-                response = httpx.post(
-                    remote_url,
-                    data={
-                        "refresh_token": client.auth._refresh_token,
-                        "access_token": client.auth._access_token,
-                    },
-                    verify=True,
-                )
-            else:
-                response = None
-            if not response or response.status_code > 399:
-                if r_c.exists("diy_crate.auth.access_token") and r_c.exists(
-                    "diy_crate.auth.refresh_token"
-                ):
-                    r_c.delete(
-                        "diy_crate.auth.access_token", "diy_crate.auth.refresh_token"
-                    )
-                    sys.exit(1)
-            else:
-                response_json: List[str] = response.json()
-                access_token_resolved, refresh_token = response_json
-                r_c.set("diy_crate.auth.access_token", access_token_resolved)
-                r_c.set("diy_crate.auth.refresh_token", refresh_token)
-                client.auth._update_current_tokens(access_token_resolved, refresh_token)
-
+            get_access_token(client.auth._access_token, bottle_app=bottle_app)
+            client._auth = oauth
+            time.sleep(min([pow(2, loop_index), 8]))
+            loop_index += 1
         except Exception:
             crate_logger.warning(
                 "Encountered error getting root box folder", exc_info=True
             )
-            time.sleep(2)
+            time.sleep(min([pow(2, loop_index), 8]))
+            loop_index += 1
         else:
             failed = True
     # local trash can
@@ -183,11 +173,12 @@ def start_cloud_threads(client_oauth):
         rec=True,
         auto_add=True,
     )
+
     if not long_poll_thread.is_alive():  # start before doing anything else
-        long_poll_thread._args = (handler,)
+        long_poll_thread._args = (handler, bottle_app)
         long_poll_thread.start()
     if not walk_thread.is_alive():
-        walk_thread._args = (BOX_DIR, box_folder, client_oauth, bottle_app, handler)
+        walk_thread._args = (BOX_DIR, box_folder, oauth, bottle_app, handler)
         walk_thread.start()
 
 
@@ -219,6 +210,18 @@ class SSLCherryPyServer(ServerAdapter):
             notifier.join()
         finally:
             server.stop()
+
+    @cherrypy.tools.register("before_finalize", priority=60)
+    def secureheaders():
+        headers = cherrypy.response.headers
+        headers["X-Frame-Options"] = "DENY"
+        headers["X-XSS-Protection"] = "1; mode=block"
+        headers["Content-Security-Policy"] = "default-src 'self';"
+        if (
+            cherrypy.server.ssl_certificate is not None
+            and cherrypy.server.ssl_private_key is not None
+        ):
+            headers["Strict-Transport-Security"] = "max-age=31536000"  # one year
 
 
 def main():
@@ -267,6 +270,13 @@ def main():
         default="",
     )
     arg_parser.add_argument("--port", type=int, help="local web server port")
+    arg_parser.add_argument(
+        "--web-server-port",
+        type=int,
+        help="remote web server port",
+        required=False,
+        default=8080,
+    )
     args = arg_parser.parse_args()
     had_oauth2 = conf_obj.has_section("oauth2")
     if had_oauth2:  # this was likely before we used the RemoteOauth2 workflow,
@@ -317,9 +327,9 @@ def main():
         or conf_obj["box"].get("authorization_url", "https://localhost:8081/auth_url"),
         "token_url": args.token_url
         or conf_obj["box"].get("token_url", "https://localhost:8081/new_access"),
-        "web_server_port": args.port or conf_obj["box"].get("web_server_port", 8080),
+        "web_server_port": args.port or args.web_server_port,
     }
-    web_server_port = conf_obj["box"]["web_server_port"]
+    web_server_port: int = int(conf_obj["box"]["web_server_port"])
     bottle_thread = threading.Thread(
         target=bottle_app.run,
         kwargs=dict(server=SSLCherryPyServer, port=web_server_port, host="0.0.0.0"),
@@ -330,10 +340,14 @@ def main():
     BOX_DIR = Path(conf_obj["box"]["directory"]).expanduser().resolve()
     if not BOX_DIR.is_dir():
         BOX_DIR.mkdir()
+    if bottle_thread and not bottle_thread.is_alive():
+        bottle_thread.start()
+
     if not (
         r_c.exists("diy_crate.auth.access_token")
         and r_c.exists("diy_crate.auth.refresh_token")
     ):
+        bottle_app.oauth = oauth
         oauth_dance(
             redis_client=r_c,
             conf=conf_obj,
@@ -344,7 +358,9 @@ def main():
     else:
         try:
             oauth = setup_remote_oauth(r_c, conf=conf_obj, bottle_app=bottle_app)
-            start_cloud_threads(oauth)
+            bottle_app.oauth = oauth
+            handler.oauth = oauth
+            start_cloud_threads()
             bottle_app.started_cloud_threads = True
         except exception.BoxOAuthException:
             r_c.delete("diy_crate.auth.access_token", "diy_crate.auth.refresh_token")
@@ -358,11 +374,9 @@ def main():
     # notifier_thread = threading.Thread(target=notifier.loop)
     # notifier_thread.daemon = True
     # notifier_thread.start()
-    if bottle_thread and not bottle_thread.is_alive():
-        bottle_thread.start()
 
     while threading.active_count() > 1:
-        time.sleep(0.1)
+        time.sleep(0.3)
     notifier.stop()
 
 
