@@ -34,6 +34,7 @@ from diycrate.oauth_utils import (
     setup_remote_oauth,
     oauth_dance,
 )
+from diycrate.oauth_utils import oauth  # noqa: F401
 from diycrate.path_utils import re_walk
 
 from diycrate.log_utils import setup_logger

@@ -10,6 +10,7 @@ from bottle import ServerAdapter, response
 import boxsdk
 from cheroot.wsgi import Server
 from cheroot.ssl.builtin import BuiltinSSLAdapter
+import cherrypy
 from diycrate import utils
 
 from diycrate.cache_utils import r_c
@@ -120,6 +121,18 @@ class SSLCherryPyServer(ServerAdapter):
             server.start()
         finally:
             server.stop()
+
+    @cherrypy.tools.register("before_finalize", priority=60)
+    def secureheaders():
+        headers = cherrypy.response.headers
+        headers["X-Frame-Options"] = "DENY"
+        headers["X-XSS-Protection"] = "1; mode=block"
+        headers["Content-Security-Policy"] = "default-src 'self';"
+        if (
+            cherrypy.server.ssl_certificate is not None
+            and cherrypy.server.ssl_private_key is not None
+        ):
+            headers["Strict-Transport-Security"] = "max-age=31536000"  # one year
 
 
 conf_obj = configparser.ConfigParser()
