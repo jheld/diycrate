@@ -30,6 +30,7 @@ dependencies = [
     "bottle>=0.12.8,<=0.13",
     "fastapi~=0.104.1",
     "uvicorn~=0.24.0",
+    "python-multipart==0.0.6",
     "boxsdk>=2.0,<3.0",
     "pyinotify==0.9.6",
     "redis~=3.3.0",

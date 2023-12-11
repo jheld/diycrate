@@ -10,7 +10,7 @@ import boxsdk
 from cheroot.wsgi import Server
 from cheroot.ssl.builtin import BuiltinSSLAdapter
 import cherrypy
-from fastapi import HTTPException
+from fastapi import Form, HTTPException
 import uvicorn
 from diycrate import utils
 
@@ -47,7 +47,7 @@ def auth_url(redirect_url: str):
 
 # @bottle_app.route("/authenticate", method="POST")
 @app.post("/authenticate")
-def authenticate_url(code: str):
+def authenticate_url(code: typing.Annotated[str, Form()]):
     """
 
     :return:
@@ -70,8 +70,8 @@ def authenticate_url(code: str):
 # @bottle_app.route("/new_access", method="POST")
 @app.post("/new_access")
 def new_access(
-    access_token: typing.Optional[str] = None,
-    refresh_token: typing.Optional[str] = None,
+    access_token: typing.Annotated[typing.Optional[str], Form()],
+    refresh_token: typing.Annotated[typing.Optional[str], Form()],
 ):
     """
     Performs refresh of tokens and returns the result
@@ -94,7 +94,7 @@ def new_access(
         ]
         # we've done the work, so let's wipe the temporary state adjustment clean
         app.oauth._update_current_tokens(None, None)
-        return json.dumps(str_response)
+        return str_response
     except boxsdk.exception.BoxOAuthException as e:
         # we've done the work, so let's wipe the temporary state adjustment clean
         app.oauth._update_current_tokens(None, None)
