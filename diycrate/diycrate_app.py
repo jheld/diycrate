@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Union
 import typing
 
-import bottle
+import fastapi
+import uvicorn
 from boxsdk.object.folder import Folder
 import httpx
 import pyinotify
@@ -38,7 +39,7 @@ from diycrate.oauth_utils import oauth  # noqa: F401
 from diycrate.path_utils import re_walk
 
 from diycrate.log_utils import setup_logger
-from diycrate.utils import Bottle, LocalRequest
+from diycrate.utils import Bottle, FastAPI
 
 setup_logger()
 
@@ -77,6 +78,10 @@ long_poll_thread.daemon = True
 walk_thread = threading.Thread(target=re_walk)
 walk_thread.daemon = True
 
+app = FastAPI()
+app.processing_oauth_browser_lock = threading.Lock()
+app.processing_oauth_refresh_lock = threading.Lock()
+
 
 # only re-enable when wishing to test token refresh or access dance
 # @bottle_app.route('/kill_tokens')
@@ -89,7 +94,8 @@ walk_thread.daemon = True
 conf_obj = configparser.ConfigParser()
 
 
-@bottle_app.route("index")
+# @bottle_app.route("index")
+@app.get("/index/", response_class=fastapi.responses.PlainTextResponse)
 def index():
     """
     Good to have a simple end-point.
@@ -98,26 +104,28 @@ def index():
     return "Hello, World!"
 
 
-@bottle_app.route("/")
-def oauth_handler():
+# @bottle_app.route("/")
+@app.get("/", response_class=fastapi.responses.PlainTextResponse)
+def oauth_handler(state: str, code: str):
     """
     RESTful end-point for the oauth handling
     :return:
     """
-    request = typing.cast(LocalRequest, bottle.request)
-    assert bottle_app.csrf_token == request.GET["state"]
+    # request = typing.cast(LocalRequest, bottle.request)
+    # assert bottle_app.csrf_token == request.GET["state"]
+    assert app.csrf_token == state
     access_token, refresh_token = httpx.post(
         conf_obj["box"]["authenticate_url"],
-        data={"code": request.GET["code"]},
+        data={"code": code},
         verify=True,
     ).json()
     store_tokens_callback(access_token, refresh_token)
-    bottle_app.oauth._update_current_tokens(access_token, refresh_token)
+    app.oauth._update_current_tokens(access_token, refresh_token)
     if not getattr(bottle_app, "started_cloud_threads", False):
         start_cloud_threads()
-        bottle_app.started_cloud_threads = True
-    bottle_app.processing_oauth_browser = False
-    bottle_app.processing_oauth_browser_lock.release()
+        app.started_cloud_threads = True
+    app.processing_oauth_browser = False
+    app.processing_oauth_browser_lock.release()
     return "OK"
 
 
@@ -130,7 +138,8 @@ def start_cloud_threads():
     global oauth
     client = Client(oauth)
     handler.oauth = oauth
-    bottle_app.oauth = oauth
+    # bottle_app.oauth = oauth
+    app.oauth = oauth
     wm.add_watch(BOX_DIR.as_posix(), mask, rec=True, auto_add=True)
     client.auth._access_token = r_c.get("diy_crate.auth.access_token")
     client.auth._refresh_token = r_c.get("diy_crate.auth.refresh_token")
@@ -155,7 +164,7 @@ def start_cloud_threads():
             box_folder = typing.cast(Folder, box_folder_initial.get())  # type: ignore
         except BoxAPIException as e:
             crate_logger.info("Bad box api response.", exc_info=e)
-            get_access_token(client.auth._access_token, bottle_app=bottle_app)
+            get_access_token(client.auth._access_token, app=app)
             client._auth = oauth
             time.sleep(min([pow(2, loop_index), 8]))
             loop_index += 1
@@ -176,10 +185,10 @@ def start_cloud_threads():
     )
 
     if not long_poll_thread.is_alive():  # start before doing anything else
-        long_poll_thread._args = (handler, bottle_app)
+        long_poll_thread._args = (handler, app)
         long_poll_thread.start()
     if not walk_thread.is_alive():
-        walk_thread._args = (BOX_DIR, box_folder, oauth, bottle_app, handler)
+        walk_thread._args = (BOX_DIR, box_folder, oauth, app, handler)
         walk_thread.start()
 
 
@@ -332,8 +341,15 @@ def main():
     }
     web_server_port: int = int(conf_obj["box"]["web_server_port"])
     bottle_thread = threading.Thread(
-        target=bottle_app.run,
-        kwargs=dict(server=SSLCherryPyServer, port=web_server_port, host="0.0.0.0"),
+        # target=bottle_app.run,
+        target=uvicorn.run,
+        kwargs=dict(
+            app=app,
+            port=web_server_port,
+            host="0.0.0.0",
+            ssl_certfile=conf_obj["ssl"]["cacert_pem_path"],
+            ssl_keyfile=conf_obj["ssl"]["privkey_pem_path"],
+        ),
     )
     bottle_thread.daemon = True
     with cloud_credentials_file_path.open("w") as fh:
@@ -348,27 +364,27 @@ def main():
         r_c.exists("diy_crate.auth.access_token")
         and r_c.exists("diy_crate.auth.refresh_token")
     ):
-        bottle_app.oauth = oauth
+        app.oauth = oauth
         oauth_dance(
             redis_client=r_c,
             conf=conf_obj,
-            bottle_app=bottle_app,
+            app=app,
             file_event_handler=handler,
         )
-        oauth = bottle_app.oauth
+        oauth = app.oauth
     else:
         try:
-            oauth = setup_remote_oauth(r_c, conf=conf_obj, bottle_app=bottle_app)
-            bottle_app.oauth = oauth
+            oauth = setup_remote_oauth(r_c, conf=conf_obj, app=app)
+            app.oauth = oauth
             handler.oauth = oauth
             start_cloud_threads()
-            bottle_app.started_cloud_threads = True
+            app.started_cloud_threads = True
         except exception.BoxOAuthException:
             r_c.delete("diy_crate.auth.access_token", "diy_crate.auth.refresh_token")
             oauth_dance(
                 redis_client=r_c,
                 conf=conf_obj,
-                bottle_app=bottle_app,
+                app=app,
                 file_event_handler=handler,
             )
     notifier.start()

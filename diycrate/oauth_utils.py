@@ -12,7 +12,7 @@ from boxsdk.auth import RemoteOAuth2
 from pyinotify import ProcessEvent
 from redis import Redis
 
-from diycrate.utils import Bottle
+from diycrate.utils import Bottle, FastAPI
 from diycrate.cache_utils import r_c
 
 
@@ -52,7 +52,7 @@ def setup_oauth(cache_client, conf_object, callback: typing.Callable[[str, str],
 
 def get_access_token(
     access_token: str | bytes | None,
-    bottle_app: Union[None, Bottle] = None,
+    app: Union[None, FastAPI, Bottle] = None,
 ) -> str:
     """
 
@@ -79,27 +79,27 @@ def get_access_token(
         refresh_token = typing.cast(str, refresh_token_from_cache)
     else:
         refresh_token = ""
-    if bottle_app:
-        acquired = bottle_app.processing_oauth_refresh_lock.acquire()
+    if app:
+        acquired = app.processing_oauth_refresh_lock.acquire()
         if acquired:
             if (access_token, refresh_token) != (
-                bottle_app.oauth.access_token,
-                bottle_app.oauth._refresh_token,
+                app.oauth.access_token,
+                app.oauth._refresh_token,
             ):
-                if bottle_app.oauth.access_token and bottle_app.oauth._refresh_token:
-                    bottle_app.processing_oauth_refresh_lock.release()
+                if app.oauth.access_token and app.oauth._refresh_token:
+                    app.processing_oauth_refresh_lock.release()
                     crate_logger.info(
                         "Acquired oauth refresh lock, "
                         "and the tokens appear to have changed already, %s, %s, %s, %s"
                         "so releasing early, skipping refresh function.",
                         access_token,
-                        bottle_app.oauth.access_token,
+                        app.oauth.access_token,
                         refresh_token,
-                        bottle_app.oauth._refresh_token,
+                        app.oauth._refresh_token,
                     )
-                    access_token_resolved = bottle_app.oauth.access_token
+                    access_token_resolved = app.oauth.access_token
                     store_tokens_callback(
-                        access_token_resolved, bottle_app.oauth._refresh_token
+                        access_token_resolved, app.oauth._refresh_token
                     )
                     return access_token_resolved
 
@@ -116,19 +116,17 @@ def get_access_token(
         if oauth_resolved:
             oauth_resolved._update_current_tokens(access_token_resolved, refresh_token)
             oauth._update_current_tokens(access_token_resolved, refresh_token)
-            if bottle_app:
-                bottle_app.oauth._update_current_tokens(
-                    access_token_resolved, refresh_token
-                )
+            if app:
+                app.oauth._update_current_tokens(access_token_resolved, refresh_token)
                 store_tokens_callback(access_token_resolved, refresh_token)
-                bottle_app.processing_oauth_refresh_lock.release()
+                app.processing_oauth_refresh_lock.release()
         else:
             raise AttributeError(
                 "oauth_resolved has no attribute `None` (by hand exception)"
             )
     except AttributeError as e:
-        if bottle_app:
-            bottle_app.processing_oauth_refresh_lock.release()
+        if app:
+            app.processing_oauth_refresh_lock.release()
         crate_logger.warn("Bad oauth object passed in.", exc_info=e)
         if r_c.exists("diy_crate.auth.access_token") and r_c.exists(
             "diy_crate.auth.refresh_token"
@@ -136,8 +134,8 @@ def get_access_token(
             r_c.delete("diy_crate.auth.access_token", "diy_crate.auth.refresh_token")
         sys.exit(1)
     except (ValueError, httpx.HTTPStatusError) as e:
-        if bottle_app:
-            bottle_app.processing_oauth_refresh_lock.release()
+        if app:
+            app.processing_oauth_refresh_lock.release()
         response_error_body = response.content.decode()
         crate_logger.warn(
             "Error on response: %s, refresh_token len: %d, access_token len: %d",
@@ -151,13 +149,13 @@ def get_access_token(
         #     "diy_crate.auth.refresh_token"
         # ):
         #     r_c.delete("diy_crate.auth.access_token", "diy_crate.auth.refresh_token")
-        if bottle_app:
+        if app:
             handler = None
             crate_logger.info("Trying the regular oauth_dance.")
             oauth_dance(
                 redis_client=r_c,
                 conf=conf_obj,
-                bottle_app=bottle_app,
+                app=app,
                 file_event_handler=handler,
             )
             raise e
@@ -177,7 +175,7 @@ def setup_remote_oauth(
     cache_client,
     retrieve_access_token: typing.Callable = get_access_token,
     conf: Union[ConfigParser, dict, None] = None,
-    bottle_app: Union[Bottle, None] = None,
+    app: Union[Bottle, FastAPI, None] = None,
 ) -> RemoteOAuth2:
     """
     sets up the oauth instance with credentials and runtime callback.
@@ -209,7 +207,7 @@ def setup_remote_oauth(
     def wrapper_retrieve_access_token(access_token_arg):
         return retrieve_access_token(
             access_token_arg,
-            bottle_app=bottle_app,
+            bottle_app=app,
         )
 
     oauth = RemoteOAuth2(
@@ -299,47 +297,45 @@ def store_tokens_callback(
 def oauth_dance(
     redis_client: Redis,
     conf: Union[ConfigParser, dict, None],
-    bottle_app: Bottle,
+    app: FastAPI,
     file_event_handler: Union[ProcessEvent, None],
     bottle_thread: Union[threading.Thread, None] = None,
 ):
     global oauth
     if True:
         access_token, refresh_token = (
-            bottle_app.oauth.access_token,
-            bottle_app.oauth._refresh_token,
+            app.oauth.access_token,
+            app.oauth._refresh_token,
         )
-        acquired = bottle_app.processing_oauth_browser_lock.acquire()
+        acquired = app.processing_oauth_browser_lock.acquire()
         if acquired:
             if (access_token, refresh_token) != (
-                bottle_app.oauth.access_token,
-                bottle_app.oauth._refresh_token,
+                app.oauth.access_token,
+                app.oauth._refresh_token,
             ):
                 crate_logger.info(
                     f"Acquired oauth browser lock, "
                     f"and the tokens appear to have changed already, {access_token=}, "
-                    f"{bottle_app.oauth.access_token=}, {refresh_token=}, "
-                    f"{bottle_app.oauth._refresh_token=} "
+                    f"{app.oauth.access_token=}, {refresh_token=}, "
+                    f"{app.oauth._refresh_token=} "
                     f"so releasing early, skipping browser new oauth."
                 )
                 if oauth:
                     oauth._update_current_tokens(
-                        bottle_app.oauth.access_token, bottle_app.oauth._refresh_token
+                        app.oauth.access_token, app.oauth._refresh_token
                     )
 
-                bottle_app.processing_oauth_browser_lock.release()
+                app.processing_oauth_browser_lock.release()
                 return
 
-    bottle_app.oauth = setup_remote_oauth(
-        redis_client, conf=conf, bottle_app=bottle_app
-    )
+    app.oauth = setup_remote_oauth(redis_client, conf=conf, app=app)
     if file_event_handler:
-        file_event_handler.oauth = bottle_app.oauth
+        file_event_handler.oauth = app.oauth
     redirect_url_domain = "127.0.0.1"
-    (auth_url, csrf_token) = bottle_app.oauth.get_authorization_url(
+    (auth_url, csrf_token) = app.oauth.get_authorization_url(
         redirect_url=f"https://{redirect_url_domain}:{conf['box']['web_server_port']}/"
     )
-    bottle_app.csrf_token = csrf_token
+    app.csrf_token = csrf_token
     if bottle_thread and not bottle_thread.is_alive():
         bottle_thread.start()
     webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth

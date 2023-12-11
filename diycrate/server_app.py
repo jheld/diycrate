@@ -5,12 +5,13 @@ import logging
 from pathlib import Path
 import typing
 
-import bottle
-from bottle import ServerAdapter, response
+from bottle import ServerAdapter
 import boxsdk
 from cheroot.wsgi import Server
 from cheroot.ssl.builtin import BuiltinSSLAdapter
 import cherrypy
+from fastapi import HTTPException
+import uvicorn
 from diycrate import utils
 
 from diycrate.cache_utils import r_c
@@ -27,58 +28,64 @@ cloud_provider_name = "Box"
 
 bottle_app = utils.Bottle()
 
+app = utils.FastAPI()
 
-@bottle_app.route("/auth_url")
-def auth_url():
+
+# @bottle_app.route("/auth_url")
+@app.get("/auth_url/")
+def auth_url(redirect_url: str):
     """
 
     :return:
     """
     crate_logger.info("auth url retrieved.")
 
-    bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
-    request = typing.cast(utils.LocalRequest, bottle.request)
-    return json.dumps(
-        bottle_app.oauth.get_authorization_url(redirect_url=request.query.redirect_url)
-    )
+    app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
+    # request = typing.cast(utils.LocalRequest, bottle.request)
+    return json.dumps(app.oauth.get_authorization_url(redirect_url=redirect_url))
 
 
-@bottle_app.route("/authenticate", method="POST")
-def authenticate_url():
+# @bottle_app.route("/authenticate", method="POST")
+@app.post("/authenticate")
+def authenticate_url(code: str):
     """
 
     :return:
     """
     crate_logger.info("authentication flow initiated.")
-    bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
-    request = typing.cast(utils.LocalRequest, bottle.request)
-    auth_code = request.POST.get("code")
+    app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
+    # request = typing.cast(utils.LocalRequest, bottle.request)
+    # auth_code = request.POST.get("code")
+    auth_code = code
     return json.dumps(
         [
             el.decode(encoding="utf-8", errors="strict")
             if isinstance(el, bytes)
             else el
-            for el in bottle_app.oauth.authenticate(auth_code=auth_code)
+            for el in app.oauth.authenticate(auth_code=auth_code)
         ]
     )
 
 
-@bottle_app.route("/new_access", method="POST")
-def new_access():
+# @bottle_app.route("/new_access", method="POST")
+@app.post("/new_access")
+def new_access(
+    access_token: typing.Optional[str] = None,
+    refresh_token: typing.Optional[str] = None,
+):
     """
     Performs refresh of tokens and returns the result
     :return:
     """
     crate_logger.info("generating an access token.")
-    bottle_app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
-    request = typing.cast(utils.LocalRequest, bottle.request)
-    access_token_to_refresh = request.POST.get("access_token")
-    refresh_token = request.POST.get("refresh_token")
-    bottle_app.oauth._update_current_tokens(
-        str(access_token_to_refresh), str(refresh_token)
-    )
+    app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
+    # request = typing.cast(utils.LocalRequest, bottle.request)
+    # access_token_to_refresh = request.POST.get("access_token")
+    access_token_to_refresh = access_token
+    # refresh_token = request.POST.get("refresh_token")
+    app.oauth._update_current_tokens(str(access_token_to_refresh), str(refresh_token))
     try:
-        refresh_response = bottle_app.oauth.refresh(access_token_to_refresh)
+        refresh_response = app.oauth.refresh(access_token_to_refresh)
         str_response = [
             el.decode(encoding="utf-8", errors="strict")
             if isinstance(el, bytes)
@@ -86,13 +93,13 @@ def new_access():
             for el in refresh_response
         ]
         # we've done the work, so let's wipe the temporary state adjustment clean
-        bottle_app.oauth._update_current_tokens(None, None)
+        app.oauth._update_current_tokens(None, None)
         return json.dumps(str_response)
     except boxsdk.exception.BoxOAuthException as e:
         # we've done the work, so let's wipe the temporary state adjustment clean
-        bottle_app.oauth._update_current_tokens(None, None)
-        response.status = e.status
-        return json.dumps(e.message)
+        app.oauth._update_current_tokens(None, None)
+        # response.status = e.status
+        raise HTTPException(status_code=e.status, detail=json.dumps(e.message))
 
 
 # Create our own sub-class of Bottle's ServerAdapter
@@ -161,7 +168,15 @@ def main():
 
     with cloud_credentials_file_path.open("w") as fh:
         conf_obj.write(fh)
-    bottle_app.run(server=SSLCherryPyServer, port=args.port, host="0.0.0.0")
+    uvicorn.run(
+        app=app,
+        port=args.port,
+        host="0.0.0.0",
+        ssl_certfile=conf_obj["ssl"]["cacert_pem_path"],
+        ssl_keyfile=conf_obj["ssl"]["privkey_pem_path"],
+        ssl_ca_certs=conf_obj["ssl"].get("chain_pem_path"),
+    )
+    # bottle_app.run(server=SSLCherryPyServer, port=args.port, host="0.0.0.0")
 
 
 def configure_ssl_conf(args, conf_obj):
