@@ -12,7 +12,7 @@ from boxsdk.auth import RemoteOAuth2
 from pyinotify import ProcessEvent
 from redis import Redis
 
-from diycrate.utils import Bottle, FastAPI
+from diycrate.utils import FastAPI
 from diycrate.cache_utils import r_c
 
 
@@ -52,7 +52,7 @@ def setup_oauth(cache_client, conf_object, callback: typing.Callable[[str, str],
 
 def get_access_token(
     access_token: str | bytes | None,
-    app: Union[None, FastAPI, Bottle] = None,
+    app: Union[None, FastAPI] = None,
 ) -> str:
     """
 
@@ -161,7 +161,7 @@ def get_access_token(
             raise e
 
         else:
-            crate_logger.warn("Bad bottle_app object passed in, exiting", exc_info=e)
+            crate_logger.warn("Bad app object passed in, exiting", exc_info=e)
             sys.exit(1)
     else:
         crate_logger.debug(
@@ -175,7 +175,7 @@ def setup_remote_oauth(
     cache_client,
     retrieve_access_token: typing.Callable = get_access_token,
     conf: Union[ConfigParser, dict, None] = None,
-    app: Union[Bottle, FastAPI, None] = None,
+    app: Union[FastAPI, None] = None,
 ) -> RemoteOAuth2:
     """
     sets up the oauth instance with credentials and runtime callback.
@@ -207,7 +207,7 @@ def setup_remote_oauth(
     def wrapper_retrieve_access_token(access_token_arg):
         return retrieve_access_token(
             access_token_arg,
-            bottle_app=app,
+            app=app,
         )
 
     oauth = RemoteOAuth2(
@@ -220,11 +220,11 @@ def setup_remote_oauth(
     return oauth
 
 
-def setup_remote_oauth_bais(
+def setup_remote_oauth_initial_basic(
     cache_client,
     retrieve_access_token: typing.Callable = get_access_token,
     conf: Union[ConfigParser, dict, None] = None,
-    bottle_app: Union[Bottle, None] = None,
+    app: Union[FastAPI, None] = None,
 ) -> RemoteOAuth2:
     """
     sets up the oauth instance with credentials and runtime callback.
@@ -261,7 +261,7 @@ def setup_remote_oauth_bais(
         )
         return retrieve_access_token(
             access_token_arg,
-            bottle_app=bottle_app,
+            app=app,
         )
 
     oauth_obj = RemoteOAuth2(
@@ -299,7 +299,7 @@ def oauth_dance(
     conf: Union[ConfigParser, dict, None],
     app: FastAPI,
     file_event_handler: Union[ProcessEvent, None],
-    bottle_thread: Union[threading.Thread, None] = None,
+    web_server_thread: Union[threading.Thread, None] = None,
 ):
     global oauth
     if True:
@@ -336,9 +336,9 @@ def oauth_dance(
         redirect_url=f"https://{redirect_url_domain}:{conf['box']['web_server_port']}/"
     )
     app.csrf_token = csrf_token
-    if bottle_thread and not bottle_thread.is_alive():
-        bottle_thread.start()
+    if web_server_thread and not web_server_thread.is_alive():
+        web_server_thread.start()
     webbrowser.open_new_tab(auth_url)  # make it easy for the end-user to start auth
 
 
-oauth = setup_remote_oauth_bais(cache_client=r_c)
+oauth = setup_remote_oauth_initial_basic(cache_client=r_c)

@@ -40,7 +40,7 @@ from diycrate.item_queue_io import (
 )
 from diycrate.log_utils import setup_logger
 from diycrate.oauth_utils import get_access_token
-from diycrate.utils import Bottle
+from diycrate.utils import FastAPI
 
 setup_logger()
 
@@ -886,7 +886,7 @@ class CustomBoxClient(Client):
         return CustomBoxEvents(self._session)
 
 
-def long_poll_event_listener(file_event_handler: EventHandler, bottle_app: Bottle):
+def long_poll_event_listener(file_event_handler: EventHandler, app: FastAPI):
     """
     Receive and process remote cloud item events in real-time
     :return:
@@ -954,7 +954,7 @@ def long_poll_event_listener(file_event_handler: EventHandler, bottle_app: Bottl
                 )
         except exception.BoxAPIException as e:
             crate_logger.warning("Box or AttributeError occurred.", exc_info=e)
-            get_access_token(client.auth._access_token, bottle_app=bottle_app)
+            get_access_token(client.auth._access_token, app=app)
             client.auth._update_current_tokens(oauth.access_token, oauth._refresh_token)
         except (AttributeError):
             crate_logger.warning("Box or AttributeError occurred.", exc_info=True)

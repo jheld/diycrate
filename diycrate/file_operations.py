@@ -26,7 +26,7 @@ from dateutil.parser import parse
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
 
-from diycrate.utils import Bottle
+from diycrate.utils import FastAPI
 
 from .cache_utils import (
     redis_key,
@@ -75,7 +75,7 @@ class EventHandler(pyinotify.ProcessEvent):
         Extends the super to add cloud storage state.
         :return:
         """
-        our_keys = ["oauth", "bottle_app", "wait_time"]
+        our_keys = ["oauth", "app", "wait_time"]
         our_kargs = {k: kargs.get(k) for k in our_keys}
         for key in our_keys:
             kargs.pop(key, None)
@@ -91,7 +91,7 @@ class EventHandler(pyinotify.ProcessEvent):
         self.operations_thread = threading.Thread(
             target=self.incoming_operation_coalesce
         )
-        self.bottle_app = kargs.get("bottle_app")
+        self.app = kargs.get("app")
         self.operations_thread.daemon = True
         self.operations_thread.start()
 
@@ -254,7 +254,7 @@ class EventHandler(pyinotify.ProcessEvent):
         crate_logger.debug(f"Real close...: {file_path.as_posix()}")
         folders_to_traverse = self.folders_to_traverse(file_path.parent.as_posix())
         client = Client(self.oauth)
-        cur_box_folder = get_box_folder(client, "0", 5, bottle_app=self.bottle_app)
+        cur_box_folder = get_box_folder(client, "0", 5, app=self.app)
         # if we're modifying in root box dir, then we've already found the folder
         try:
             is_base = any(
@@ -362,9 +362,7 @@ class EventHandler(pyinotify.ProcessEvent):
 
         folder_id = "0"
         retry_limit = 5
-        cur_box_folder = get_box_folder(
-            client, folder_id, retry_limit, bottle_app=self.bottle_app
-        )
+        cur_box_folder = get_box_folder(client, folder_id, retry_limit, app=self.app)
         # if we're modifying in root box dir, then we've already found the folder
         try:
             is_base = any(
@@ -522,8 +520,8 @@ class EventHandler(pyinotify.ProcessEvent):
                 box_folder = typing.cast(Folder, client.folder(folder_id="0").get())  # type: ignore
             except BoxAPIException as e:
                 crate_logger.warning("Error getting box root folder.", exc_info=e)
-                get_access_token(client.auth.access_token, bottle_app=self.bottle_app)
-                client._auth = self.bottle_app.oauth
+                get_access_token(client.auth.access_token, app=self.app)
+                client._auth = self.app.oauth
                 time.sleep(min([pow(2, loop_index), 8]))
                 loop_index += 1
             except Exception:
@@ -735,9 +733,7 @@ class EventHandler(pyinotify.ProcessEvent):
                     r_c.set(redis_key(src_file.object_id), json.dumps(version_info))
                     r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
                     path_builder = BOX_DIR
-                    oauth = setup_remote_oauth(
-                        r_c, conf=conf_obj, bottle_app=self.bottle_app
-                    )
+                    oauth = setup_remote_oauth(r_c, conf=conf_obj, app=self.app)
                     client = Client(oauth)
                     parent_folders: list[Folder] = (
                         client.file(file_obj.object_id)
@@ -1170,7 +1166,7 @@ def get_box_folder(
     client: Client,
     folder_id: str,
     retry_limit: int,
-    bottle_app: Union[Bottle, None] = None,
+    app: Union[FastAPI, None] = None,
 ) -> Folder:
     """
 
@@ -1190,9 +1186,9 @@ def get_box_folder(
             cur_box_folder = box_folder
             break
         except BoxAPIException as e:
-            get_access_token(client.auth._access_token, bottle_app=bottle_app)
-            if bottle_app:
-                client._auth = bottle_app.oauth
+            get_access_token(client.auth._access_token, app=app)
+            if app:
+                client._auth = app.oauth
             if i == retry_limit - 1:
                 crate_logger.info("Bad box api response.", exc_info=e)
                 raise e

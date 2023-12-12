@@ -27,7 +27,6 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "bottle>=0.12.8,<=0.13",
     "fastapi~=0.104.1",
     "uvicorn~=0.24.0",
     "python-multipart==0.0.6",
@@ -36,7 +35,6 @@ dependencies = [
     "redis~=3.3.0",
     "httpx==0.22.0",
     "pyopenssl>=16.0.0",
-    "cherrypy>=13.0.0",
     "python-dateutil",
     "certbot==1.12.0",
     "Send2Trash==1.8.0",

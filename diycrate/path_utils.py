@@ -18,7 +18,7 @@ from boxsdk.object.folder import Folder
 from dateutil.parser import parse
 
 from diycrate.oauth_utils import get_access_token
-from diycrate.utils import Bottle
+from diycrate.utils import FastAPI
 
 from .file_operations import EventHandler, wm, BOX_DIR, path_time_recurse_func
 from .item_queue_io import (
@@ -49,7 +49,7 @@ def walk_and_notify_and_download_tree(
     path: PathLike,
     box_folder: Folder,
     oauth_obj: OAuth2,
-    bottle_app: Bottle,
+    app: FastAPI,
     p_id: Optional[str] = None,
     local_only: bool = False,
 ) -> None:
@@ -59,7 +59,7 @@ def walk_and_notify_and_download_tree(
     :param box_folder:
     :param oauth_obj:
     :param p_id:
-    :param bottle_app:
+    :param app:
     :param file_event_handler:
     :param local_only:
     :return:
@@ -72,8 +72,8 @@ def walk_and_notify_and_download_tree(
         raise ValueError(f"path: {path} is not a path; cannot walk it.")
     path = Path(path)
     crate_logger.debug(f"Walking path: {path}")
-    bottle_app.oauth = getattr(bottle_app, "oauth", oauth_obj)
-    client = oauth_setup_within_directory_walk(bottle_app.oauth)
+    app.oauth = getattr(app, "oauth", oauth_obj)
+    client = oauth_setup_within_directory_walk(app.oauth)
 
     time_data_map = path_time_recurse_func(path, wm)
     if Path(path) == BOX_DIR:
@@ -87,8 +87,8 @@ def walk_and_notify_and_download_tree(
                 user: User = typing.cast(User, user_resource.get(fields=u_fields))  # type: ignore
                 break
             except BoxAPIException as e:
-                get_access_token(client.auth._access_token, bottle_app=bottle_app)
-                client = oauth_setup_within_directory_walk(bottle_app.oauth)
+                get_access_token(client.auth._access_token, app=app)
+                client = oauth_setup_within_directory_walk(app.oauth)
                 user_resource = typing.cast(User, client.user())
                 if i == i_limit - 1:
                     crate_logger.warn("Bad box api response.", exc_info=e)
@@ -156,7 +156,7 @@ def walk_and_notify_and_download_tree(
                 fresh_download = True
             retry_limit = 15
             kick_off_sub_directory_box_folder_download_walk(
-                bottle_app,
+                app,
                 box_folder,
                 box_item,
                 client,
@@ -447,7 +447,7 @@ def kick_off_download_file_from_box_via_walk(box_item, oauth_obj, path):
 
 
 def kick_off_sub_directory_box_folder_download_walk(
-    bottle_app: Bottle,
+    app: FastAPI,
     box_folder: Folder,
     box_item: Union[File, Folder],
     client: Client,
@@ -456,7 +456,7 @@ def kick_off_sub_directory_box_folder_download_walk(
     oauth_obj: OAuth2,
     retry_limit: int,
 ) -> None:
-    bottle_app.oauth = getattr(bottle_app, "oauth", oauth_obj)
+    app.oauth = getattr(app, "oauth", oauth_obj)
     start_t = time.monotonic()
     for i in range(0, retry_limit):
         try:
@@ -491,7 +491,7 @@ def kick_off_sub_directory_box_folder_download_walk(
                 local_path,
                 box_folder_obj,
                 oauth_obj,
-                bottle_app,
+                app,
                 p_id=box_folder.object_id,
             )
             break
@@ -551,7 +551,7 @@ def re_walk(
     path: PathLike,
     box_folder: Folder,
     oauth_obj: OAuth2,
-    bottle_app: Bottle,
+    app: FastAPI,
     file_event_handler: Union[EventHandler, None] = None,
 ):
     """
@@ -559,7 +559,7 @@ def re_walk(
     :param path:
     :param box_folder:
     :param oauth_obj:
-    :param bottle_app:
+    :param app:
     :param file_event_handler:
     :return:
     """
@@ -568,7 +568,7 @@ def re_walk(
             start = time.time()
             crate_logger.info("Starting walk.")
             # wm.add_watch(path.as_posix(), mask, rec=True, auto_add=True)
-            walk_and_notify_and_download_tree(path, box_folder, oauth_obj, bottle_app)
+            walk_and_notify_and_download_tree(path, box_folder, oauth_obj, app)
             end = time.time()
             duration: Union[int, float] = int(end - start)
             if duration >= 60:
