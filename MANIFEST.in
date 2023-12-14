@@ -11,6 +11,7 @@ include *.py
 include mypy.ini
 
 exclude Makefile .flake8 .pre-commit-config.yaml
+exclude function-project/*
 
 # Include the project's internal logic
 recursive-include diycrate *
