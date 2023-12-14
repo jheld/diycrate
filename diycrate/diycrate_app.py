@@ -105,11 +105,19 @@ def oauth_handler(state: str, code: str):
     :return:
     """
     assert app.csrf_token == state
-    access_token, refresh_token = httpx.post(
+    post_data = {"code": code}
+    post_kwargs = {
+        (
+            "json" if bool(int(conf_obj["box"]["auth_data_as_json"])) else "data"
+        ): post_data
+    }
+    auth_response = httpx.post(
         conf_obj["box"]["authenticate_url"],
-        data={"code": code},
         verify=True,
-    ).json()
+        timeout=10.0,
+        **post_kwargs,
+    )
+    access_token, refresh_token = auth_response.json()
     store_tokens_callback(access_token, refresh_token)
     app.oauth._update_current_tokens(access_token, refresh_token)
     if not getattr(app, "started_cloud_threads", False):
@@ -236,6 +244,12 @@ def main():
         required=False,
         default=8080,
     )
+    arg_parser.add_argument(
+        "--auth-data-as-json",
+        type=int,
+        help="send auth data as json or not to remove server",
+        required=False,
+    )
     args = arg_parser.parse_args()
     had_oauth2 = conf_obj.has_section("oauth2")
     if had_oauth2:  # this was likely before we used the RemoteOauth2 workflow,
@@ -287,6 +301,9 @@ def main():
         "token_url": args.token_url
         or conf_obj["box"].get("token_url", "https://localhost:8081/new_access"),
         "web_server_port": args.port or args.web_server_port,
+        "auth_data_as_json": args.auth_data_as_json
+        if args.auth_data_as_json is not None
+        else conf_obj["box"]["auth_data_as_json"],
     }
     web_server_port: int = int(conf_obj["box"]["web_server_port"])
     web_server_thread = threading.Thread(

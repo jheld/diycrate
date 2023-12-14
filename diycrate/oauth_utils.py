@@ -103,10 +103,17 @@ def get_access_token(
                     )
                     return access_token_resolved
 
+    post_data = {"refresh_token": refresh_token, "access_token": access_token}
+    post_kwargs = {
+        (
+            "json" if bool(int(conf_obj["box"]["auth_data_as_json"])) else "data"
+        ): post_data
+    }
     response = httpx.post(
         remote_url,
-        data={"refresh_token": refresh_token, "access_token": access_token},
         verify=True,
+        timeout=10.0,
+        **post_kwargs,
     )
     try:
         response.raise_for_status()

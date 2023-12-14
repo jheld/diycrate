@@ -9,7 +9,7 @@ packages:
       functions:
         - name: hello
           binary: false
-          main: ""
+          main: "main"
           runtime: python:3.11
           web: "raw"
           webSecure: false
