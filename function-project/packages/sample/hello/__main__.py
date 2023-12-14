@@ -1,6 +1,7 @@
 import json
 import os
-from typing import Optional
+import re
+from typing import Optional, Union
 import boxsdk
 import traceback
 
@@ -41,7 +42,7 @@ def authenticate_url(code: str) -> str:
 def new_access(
     access_token: Optional[str],
     refresh_token: str,
-):
+) -> list[Union[None, str]]:
     """
     Performs refresh of tokens and returns the result
     :return:
@@ -54,7 +55,9 @@ def new_access(
     access_token_to_refresh = access_token or ""
     box_oauth._update_current_tokens(str(access_token_to_refresh), str(refresh_token))
     try:
-        refresh_response = box_oauth.refresh(access_token_to_refresh)
+        refresh_response: tuple[Optional[str], Optional[str]] = box_oauth.refresh(
+            access_token_to_refresh
+        )
         str_response = [
             el.decode(encoding="utf-8", errors="strict")
             if isinstance(el, bytes)
@@ -68,37 +71,38 @@ def new_access(
         raise e
 
 
-def main(event, context):
-    print("let us begin")
-
+def main(event, _):
     path = event["http"]["path"]
-    if path in ["/auth_url", "/auth_url/"] and event["http"]["method"] == "GET":
+    if re.match(r"^/auth_url(/)?", path) and event["http"]["method"] == "GET":
         query_string = event["http"]["queryString"]
         redirect_url: str = parse.parse_qs(query_string)["redirect_url"][0]
+        status_code = 200
         try:
             response = auth_url(redirect_url)
         except Exception:
             response = traceback.format_exc()
+            status_code = 500
         return {
             "body": response,
+            "statusCode": status_code,
             "headers": {"Content-Type": "application/json"},
         }
-    elif (
-        path in ["/authenticate", "/authenticate/"]
-        and event["http"]["method"] == "POST"
-    ):
+    elif re.match(r"^/authenticate(/)?", path) and event["http"]["method"] == "POST":
         body: str = event["http"]["body"]
+        status_code = 200
 
         try:
             response = authenticate_url(json.loads(body)["code"])
         except Exception:
             response = traceback.format_exc()
+            status_code = 500
         return {
             "body": response,
+            "statusCode": status_code,
             "headers": {"Content-Type": "application/json"},
         }
 
-    elif path in ["/new_access", "/new_access/"] and event["http"]["method"] == "POST":
+    elif re.match(r"/new_access(/)?", path) and event["http"]["method"] == "POST":
         body: str = event["http"]["body"]
         status_code = 200
         try:
@@ -119,17 +123,7 @@ def main(event, context):
         }
 
     return {
-        "body": {
-            "event": event,
-            "context": {
-                "activationId": context.activation_id,
-                "apiHost": context.api_host,
-                "apiKey": context.api_key,
-                "deadline": context.deadline,
-                "functionName": context.function_name,
-                "functionVersion": context.function_version,
-                "namespace": context.namespace,
-                "requestId": context.request_id,
-            },
-        },
+        "body": "Unsupported operation",
+        "statusCode": 400,
+        "headers": {"Content-Type": "application/json"},
     }
