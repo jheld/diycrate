@@ -46,14 +46,10 @@ def authenticate_url(code: typing.Annotated[str, Form()]):
     crate_logger.info("authentication flow initiated.")
     app.oauth = setup_oauth(r_c, conf_obj, store_tokens_callback)
     auth_code = code
-    return json.dumps(
-        [
-            el.decode(encoding="utf-8", errors="strict")
-            if isinstance(el, bytes)
-            else el
-            for el in app.oauth.authenticate(auth_code=auth_code)
-        ]
-    )
+    return [
+        el.decode(encoding="utf-8", errors="strict") if isinstance(el, bytes) else el
+        for el in app.oauth.authenticate(auth_code=auth_code)
+    ]
 
 
 @app.post("/new_access")
