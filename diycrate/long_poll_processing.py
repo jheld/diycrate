@@ -311,17 +311,21 @@ def process_item_trash_file(event: Union[Event, Mapping], obj_id):
         file_path = path / event["source"]["name"]
     else:
         file_path = path / item_info["file_path"]
+    existed_in_some_way = False
     if file_path.exists():
         send2trash(file_path.as_posix())
+        existed_in_some_way = True
     if r_c.exists(redis_key(obj_id)):
         r_c.delete(redis_key(obj_id), redis_path_for_object_id_key(file_path))
         r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
-    notify_user_with_gui(
-        "Box message: Deleted:",
-        file_path.as_posix(),
-        crate_logger=crate_logger,
-        expire_time=10000,
-    )
+        existed_in_some_way = True
+    if existed_in_some_way:
+        notify_user_with_gui(
+            "Box message: Deleted:",
+            file_path.as_posix(),
+            crate_logger=crate_logger,
+            expire_time=10000,
+        )
     r_c.setex(
         f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
     )
@@ -357,7 +361,10 @@ def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
                     r_c.delete(cur_sub_box_item_info["file_path"])
             r_c.delete(redis_key(sub_box_id))
         r_c.delete(redis_key(obj_id))
-        shutil.rmtree(file_path)
+        existed_in_some_way = False
+        if file_path.exists():
+            shutil.rmtree(file_path)
+            existed_in_some_way = True
         obj_cache_data_raw = r_c.get(redis_key(obj_id))
         obj_cache_data = (
             json.loads(str(obj_cache_data_raw))
@@ -383,7 +390,8 @@ def process_item_trash_folder(event: Union[Event, Mapping], obj_id):
             r_c.set("diy_crate.last_save_time_stamp", int(time.time()))
         deletion_msg = ["Box message: Deleted:", file_path.as_posix()]
         crate_logger.info(" ".join(deletion_msg))
-        notify_user_with_gui(*deletion_msg, crate_logger=crate_logger)
+        if existed_in_some_way:
+            notify_user_with_gui(*deletion_msg, crate_logger=crate_logger)
         r_c.setex(
             f"diy_crate:event_ids:{event.event_id}", timedelta(days=32), path.as_posix()
         )
