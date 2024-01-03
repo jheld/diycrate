@@ -39,6 +39,7 @@ dependencies = [
     "certbot==1.12.0",
     "Send2Trash==1.8.0",
     "urllib3==1.26.15",
+    "watchfiles==0.21.0",
 ]
 
 [project.entry-points]

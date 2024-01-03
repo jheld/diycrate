@@ -19,6 +19,7 @@ from boxsdk import BoxAPIException, Client, exception
 from diycrate.cache_utils import r_c
 from diycrate.file_operations import (
     EventHandler,
+    watch_wrapper,
     wm,
     in_moved_to,
     in_moved_from,
@@ -76,6 +77,8 @@ file_notify_read_freq = 3
 
 notifier = pyinotify.ThreadedNotifier(wm, handler, read_freq=file_notify_read_freq)
 notifier.coalesce_events()
+
+watch_thread = threading.Thread(target=watch_wrapper)
 
 
 # only re-enable when wishing to test token refresh or access dance
@@ -353,6 +356,8 @@ def main():
                 file_event_handler=handler,
             )
     notifier.start()
+    watch_thread._args = (BOX_DIR, trash_directory.as_posix(), oauth, app, wait_time)
+    watch_thread.start()
     # notifier_thread = threading.Thread(target=notifier.loop)
     # notifier_thread.daemon = True
     # notifier_thread.start()
