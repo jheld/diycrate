@@ -1,35 +1,33 @@
 import configparser
 import json
+import logging
 import multiprocessing.pool
 import os
 import random
 import time
-import logging
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Callable, Any, List, NamedTuple, Union, Mapping
+from typing import Any, Callable, List, Mapping, NamedTuple, Union, cast
 
 import boxsdk.exception
-import dateutil
-from boxsdk import Client, OAuth2
+from boxsdk import OAuth2
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.event import Event
-from boxsdk.object.file import File
-from boxsdk.object.folder import Folder
-from boxsdk.object.user import User
 from dateutil.parser import parse
 from dateutil.tz import tzutc
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
 
+from diycrate.utils import Client, File, Folder, User
+
 from .cache_utils import (
-    redis_key,
-    redis_set,
-    redis_get,
-    r_c,
     local_or_box_file_m_time_key_func,
+    r_c,
+    redis_get,
+    redis_key,
     redis_path_for_object_id_key,
+    redis_set,
 )
 from .gui import notify_user_with_gui
 from .log_utils import setup_logger
@@ -117,14 +115,17 @@ def perform_upload(
                 item = ret_val  # is the new/updated item
                 client = Client(oauth)
                 if isinstance(item, File):
-                    file_obj: File = client.file(file_id=item.object_id).get(
+                    raw_file_obj = cast(File, client.file(file_id=item.object_id))
+                    f_get_kwargs = dict(
                         fields=["path_collection", "name", "etag", "modified_at"]
                     )
+
+                    file_obj: File = cast(File, raw_file_obj.get(**f_get_kwargs))
                     redis_set(r_c, file_obj, last_modified_time, box_dir_path=BOX_DIR)
                     r_c.set(
                         local_or_box_file_m_time_key_func(path_name, False),
                         datetime.fromtimestamp(Path(path_name).stat().st_mtime)
-                        .astimezone(dateutil.tz.tzutc())
+                        .astimezone(tzutc())
                         .timestamp(),
                     )
                     r_c.set(
@@ -140,13 +141,15 @@ def perform_upload(
                         if entry.id == "0":
                             continue
                         path_builder /= entry.name
-                        folder_entry = client.folder(entry.id).get(
-                            fields=["modified_at"]
+                        raw_folder_obj = cast(Folder, client.folder(entry.id))
+                        fo_kwargs = dict(fields=["modified_at"])
+                        folder_entry: Folder = cast(
+                            Folder, raw_folder_obj.get(**fo_kwargs)
                         )
                         r_c.set(
                             local_or_box_file_m_time_key_func(path_builder, True),
                             parse(folder_entry.modified_at)
-                            .astimezone(dateutil.tz.tzutc())
+                            .astimezone(tzutc())
                             .timestamp(),
                         )
                         r_c.set(
@@ -155,14 +158,15 @@ def perform_upload(
                         )
                 if isinstance(post_ret_callable, partial):
                     post_ret_callable()
-                user_resource: User = client.user()
+                user_resource = client.user()
                 user: User = user_resource.get(fields=["space_used", "space_amount"])
-                crate_logger.debug(
-                    "User space used/amount:  %d%% -> (used: %dGiB, total: %dGiB)",
-                    (user.space_used / user.space_amount) * 100,
-                    user.space_used / 1024 / 1024 / 1024,
-                    user.space_amount / 1024 / 1024 / 1024,
-                )
+                if user.space_used / user.space_amount > 0.9:
+                    crate_logger.debug(
+                        "User space used/amount:  %d%% -> (used: %dGiB, total: %dGiB)",
+                        (user.space_used / user.space_amount) * 100,
+                        user.space_used / 1024 / 1024 / 1024,
+                        user.space_amount / 1024 / 1024 / 1024,
+                    )
             break
         except BoxAPIException as e:
             crate_logger.info(f"{args}", exc_info=True)
@@ -204,7 +208,9 @@ def download_queue_processor(queue_item: "DownloadQueueItem"):
     item = download_queue_item.item
     path = download_queue_item.path
     event = download_queue_item.event
-    if event and r_c.exists(f"diy_crate:event_ids:{event.event_id}"):
+    if event and r_c.exists(
+        f"diy_crate:event_ids:{cast(str, getattr(event, 'event_id'))}"
+    ):
         crate_logger.debug(f"Skipping download due to processed event ID for {path=}")
     if item["type"] == "file":
         info = redis_get(r_c, item) if r_c.exists(redis_key(item.object_id)) else None
@@ -239,7 +245,7 @@ def download_queue_processor(queue_item: "DownloadQueueItem"):
                 )
             try:
                 crate_logger.debug(f"attempt the download {path=}")
-                perform_download(item, path)
+                perform_download(cast(File, item), path)
             except (ConnectionResetError, ConnectionError):
                 crate_logger.debug("Error occurred.", exc_info=True)
                 time.sleep(5)
@@ -247,13 +253,13 @@ def download_queue_processor(queue_item: "DownloadQueueItem"):
         crate_logger.debug(f"was not a file, making this a no-op on {path=}")
     if event:
         r_c.setex(
-            f"diy_crate:event_ids:{event.event_id}",
+            f"diy_crate:event_ids:{cast(str, getattr(event, 'event_id'))}",
             timedelta(days=32),
             (path.as_posix() if isinstance(path, Path) else path),
         )
 
 
-def perform_download(item: File | Folder, path: Union[str, Path], retry_limit=15):
+def perform_download(item: File, path: Union[str, Path], retry_limit=15):
     if isinstance(path, str):
         path = Path(path)
     for i in range(retry_limit):
@@ -267,7 +273,8 @@ def perform_download(item: File | Folder, path: Union[str, Path], retry_limit=15
 
                 dlwd_key = f"diy_crate.breadcrumb.create_from_box.{path}"
                 r_c.setex(dlwd_key, 300, 1)
-                item.download_to(item_handler)
+                if isinstance(item, File):
+                    item.download_to(item_handler)
                 # if item_wd is not None:
                 #     wm.update_watch(item_wd, mask=mask | in_create)
 
@@ -304,7 +311,7 @@ def perform_download(item: File | Folder, path: Union[str, Path], retry_limit=15
                 r_c,
                 item,
                 datetime.fromtimestamp(os.path.getmtime(path))
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp(),
                 box_dir_path=BOX_DIR,
                 fresh_download=not was_versioned,
@@ -314,7 +321,7 @@ def perform_download(item: File | Folder, path: Union[str, Path], retry_limit=15
                 Path(path)
                 .resolve()
                 .as_posix(): datetime.fromtimestamp(os.path.getmtime(path))
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp()
             }
             for mkey, mvalue in time_data_map.items():
@@ -322,7 +329,7 @@ def perform_download(item: File | Folder, path: Union[str, Path], retry_limit=15
             crate_logger.debug(f"downloaded {item}, modified_at: {item.modified_at}")
             r_c.set(
                 local_or_box_file_m_time_key_func(path / item.name, True),
-                parse(item.modified_at).astimezone(dateutil.tz.tzutc()).timestamp(),
+                parse(item.modified_at).astimezone(tzutc()).timestamp(),
             )
             r_c.set(redis_path_for_object_id_key(path / item.name), item.object_id)
             path_builder = BOX_DIR
@@ -337,9 +344,7 @@ def perform_download(item: File | Folder, path: Union[str, Path], retry_limit=15
                     folder_entry = client.folder(entry.id).get(fields=["modified_at"])
                     r_c.set(
                         local_or_box_file_m_time_key_func(path_builder, True),
-                        parse(folder_entry.modified_at)
-                        .astimezone(dateutil.tz.tzutc())
-                        .timestamp(),
+                        parse(folder_entry.modified_at).astimezone(tzutc()).timestamp(),
                     )
                     r_c.set(
                         redis_path_for_object_id_key(path_builder),

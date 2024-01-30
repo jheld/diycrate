@@ -9,24 +9,21 @@ from datetime import timedelta
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Union, List, Dict
+from typing import Iterable, Optional, TypedDict, Union, List, Dict, cast
 import typing
 
 
 import boxsdk.object.file
-import dateutil
 import pyinotify
-from boxsdk import Client
 from boxsdk.exception import BoxAPIException
-from boxsdk.object.file import File
-from boxsdk.object.folder import Folder
 from boxsdk.util.chunked_uploader import ChunkedUploader
 from dateutil import tz
+from dateutil.tz import tzutc
 from dateutil.parser import parse
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
 
-from diycrate.utils import FastAPI
+from diycrate.utils import FastAPI, Client, File, Folder, Item
 
 from .cache_utils import (
     redis_key,
@@ -61,6 +58,18 @@ if not cloud_credentials_file_path.is_file():
     cloud_credentials_file_path.write_text("")
 conf_obj.read(cloud_credentials_file_path)
 BOX_DIR = Path(conf_obj["box"]["directory"]).expanduser().resolve()
+
+
+class Event(pyinotify.Event):
+    wd: int
+    mask: int
+    maskname: str
+    path: str
+    name: Optional[str]
+    pathname: str
+    src_pathname: str
+    cookie: int
+    dir: bool
 
 
 # noinspection PyUnresolvedReferences
@@ -134,12 +143,13 @@ class EventHandler(pyinotify.ProcessEvent):
         :param folder_id:
         :return:
         """
-        folder = None
+        folder: Folder
         num_retry = 15
         for x in range(num_retry):
             try:
-                folder = client.folder(folder_id=folder_id).get()
-                break
+                raw_folder = client.folder(folder_id=folder_id)
+                folder = raw_folder.get()
+                return folder
             except (
                 ConnectionError,
                 BrokenPipeError,
@@ -156,7 +166,9 @@ class EventHandler(pyinotify.ProcessEvent):
                             folder_id
                         )
                     )
-        return folder
+                    raise
+
+        raise Exception("Should not be here")
 
     @staticmethod
     def folders_to_traverse(event_path: Union[str, Path]) -> List[str]:
@@ -177,7 +189,7 @@ class EventHandler(pyinotify.ProcessEvent):
     @staticmethod
     def traverse_path(
         client: Client,
-        event: pyinotify.Event,
+        event: Event,
         cur_box_folder: Folder,
         folders_to_traverse: List["str"],
     ):
@@ -193,9 +205,9 @@ class EventHandler(pyinotify.ProcessEvent):
             did_find_folder = False
             limit = 100
             offset = 0
-            folder_items_generator = cur_box_folder.get_items(
-                offset=offset, limit=limit
-            )
+            raw_item_iter = cur_box_folder.get_items(offset=offset, limit=limit)  # type: ignore
+            folder_items_generator = cast(Iterable[Item], raw_item_iter)
+            loop_idx = 0
             while True:
                 try:
                     for entry in folder_items_generator:
@@ -203,10 +215,11 @@ class EventHandler(pyinotify.ProcessEvent):
                             did_find_folder = True
                             cur_box_folder = EventHandler.get_folder(
                                 client, entry.object_id
-                            )
+                            )  # type: ignore
                             break  # found this piece of the path, keep going
                 except BoxAPIException:
-                    time.sleep(5)
+                    time.sleep(min([pow(2, loop_idx), 8]))
+                    loop_idx += 1
                 else:
                     break
             if not did_find_folder:
@@ -220,9 +233,10 @@ class EventHandler(pyinotify.ProcessEvent):
                         ),
                         exc_info=True,
                     )
+                    raise
         return cur_box_folder
 
-    def process_event(self, event: pyinotify.Event, operation: str):
+    def process_event(self, event: Event, operation: str):
         """
         Wrapper to process the given event on the operation.
         :param event:
@@ -234,7 +248,7 @@ class EventHandler(pyinotify.ProcessEvent):
             if operation == "delete":
                 self.process_delete_event(event)
             elif operation == "move":
-                self.process_move_event(event)
+                self.process_move_event(cast(List, event))
             elif operation == "create":
                 self.process_create_event(event)
             elif operation == "modify":
@@ -249,7 +263,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 exc_info=True,
             )
 
-    def process_real_close_event(self, event: pyinotify.Event):
+    def process_real_close_event(self, event: Event):
         file_path = Path(event.pathname)
         crate_logger.debug(f"Real close...: {file_path.as_posix()}")
         folders_to_traverse = self.folders_to_traverse(file_path.parent.as_posix())
@@ -279,9 +293,8 @@ class EventHandler(pyinotify.ProcessEvent):
         is_dir = file_path.is_dir()
         limit = 100
         offset = 0
-        safe_iter = SafeIter(
-            cur_box_folder.get_items(offset=offset, limit=limit), path=event.pathname
-        )
+        items_iter = cur_box_folder.get_items(offset=offset, limit=limit)
+        safe_iter = SafeIter(items_iter, path=event.pathname)
         for entry in safe_iter:
             if entry is None:
                 continue
@@ -297,12 +310,14 @@ class EventHandler(pyinotify.ProcessEvent):
         if is_file and not did_find_the_file:
             last_modified_time = (
                 datetime.fromtimestamp(file_path.stat().st_mtime)
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp()
             )
             try:
                 if file_path.stat().st_size < 20000000:
-                    raise BoxAPIException(code="file_size_too_small", status=400)
+                    raise BoxAPIException(
+                        **dict(code="file_size_too_small", status=400)
+                    )
                 box_uploader: ChunkedUploader = cur_box_folder.get_chunked_uploader(
                     file_path.as_posix()
                 )
@@ -339,7 +354,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 upload_queue_processor, kwds=dict(queue_item=queue_item)
             )
 
-    def process_modify_event(self, event: pyinotify.Event, operation: str):
+    def process_modify_event(self, event: Event, operation: str):
         file_path = Path(event.pathname)
         crate_logger.debug(f"{operation}...: {file_path.as_posix()}")
         if r_c.exists(f"{event.pathname}:created:enqueue"):
@@ -352,7 +367,7 @@ class EventHandler(pyinotify.ProcessEvent):
             r_c.set(
                 local_or_box_file_m_time_key_func(file_path.as_posix(), False),
                 datetime.fromtimestamp(file_path.stat().st_mtime)
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp(),
             )
         except FileNotFoundError:
@@ -402,12 +417,22 @@ class EventHandler(pyinotify.ProcessEvent):
                     can_update = True
                     was_versioned = r_c.exists(redis_key(cur_file.object_id))
                     try:
-                        info = redis_get(r_c, cur_file) if was_versioned else None
-                        info = (
-                            info
-                            if was_versioned
-                            else {"fresh_download": True, "etag": "0", "time_stamp": 0}
+
+                        class ItemVersion(TypedDict):
+                            time_stamp: int
+                            fresh_download: bool
+                            etag: str
+
+                        raw_info: ItemVersion | None = (
+                            redis_get(r_c, cur_file) if was_versioned else None
                         )
+                        if was_versioned:
+                            info = cast(ItemVersion, raw_info)
+                        else:
+                            info = ItemVersion(
+                                **{"fresh_download": True, "etag": "0", "time_stamp": 0}
+                            )
+
                         item_version = info
                         if cur_file["etag"] == item_version["etag"] and (
                             (
@@ -423,7 +448,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         if can_update:
                             queue_item = UploadQueueItemReal(
                                 datetime.fromtimestamp(last_modified_time)
-                                .astimezone(dateutil.tz.tzutc())
+                                .astimezone(tzutc())
                                 .timestamp(),
                                 partial(cur_file.update_contents, file_path.as_posix()),
                                 self.oauth,
@@ -479,7 +504,7 @@ class EventHandler(pyinotify.ProcessEvent):
             last_modified_time = Path(event.pathname).stat().st_mtime
             queue_item = UploadQueueItemReal(
                 datetime.fromtimestamp(last_modified_time)
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp(),
                 partial(
                     cur_box_folder.upload,
@@ -508,14 +533,13 @@ class EventHandler(pyinotify.ProcessEvent):
             )
             # wm.add_watch(file_path.as_posix(), rec=True, mask=mask, auto_add=True)
 
-    def process_create_event(self, event: pyinotify.Event):
+    def process_create_event(self, event: Event):
         crate_logger.debug("Creating: {}".format(event.pathname))
         folders_to_traverse = self.folders_to_traverse(event.path)
         client = Client(self.oauth)
-        failed = False
         box_folder: Union[Folder, None] = None
         loop_index = 0
-        while not failed:
+        while not box_folder:
             try:
                 box_folder = typing.cast(Folder, client.folder(folder_id="0").get())  # type: ignore
             except BoxAPIException as e:
@@ -528,8 +552,6 @@ class EventHandler(pyinotify.ProcessEvent):
                 crate_logger.warning("Error getting box root folder.", exc_info=True)
                 time.sleep(min([pow(2, loop_index), 8]))
                 loop_index += 1
-            else:
-                failed = True
         cur_box_folder = box_folder
         # if we're modifying in root box dir, then we've already found the folder
         try:
@@ -616,7 +638,7 @@ class EventHandler(pyinotify.ProcessEvent):
             )
             queue_item = UploadQueueItemReal(
                 datetime.fromtimestamp(last_modified_time)
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp(),
                 partial(
                     cur_box_folder.upload,
@@ -644,21 +666,21 @@ class EventHandler(pyinotify.ProcessEvent):
             )
             # wm.add_watch(event.pathname, rec=True, mask=mask, auto_add=True)
 
-    def process_move_event(self, event: pyinotify.Event):
+    def process_move_event(self, event: List[Event]):
         crate_logger.debug("Doing a move on: {}".format(event))
         src_event, dest_event = event
         folders_to_traverse = self.folders_to_traverse(dest_event.path)
         client = Client(self.oauth)
-        failed = False
+
         box_folder = None
-        while not failed:
+        loop_idx = 0
+        while not box_folder:
             try:
                 box_folder = client.folder(folder_id="0").get()
             except Exception:
                 crate_logger.warning("Error getting root box folder.", exc_info=True)
-                time.sleep(2)
-            else:
-                failed = True
+                time.sleep(min([pow(2, loop_idx), 8]))
+                loop_idx += 1
         cur_box_folder = box_folder
         # if we're modifying in root box dir, then we've already found the folder
         cur_box_folder = self.traverse_path(
@@ -701,7 +723,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         datetime.fromtimestamp(
                             Path(dest_event.pathname).stat().st_mtime
                         )
-                        .astimezone(dateutil.tz.tzutc())
+                        .astimezone(tzutc())
                         .timestamp()
                     )
                     file_obj = client.file(file_id=src_file.object_id).get()
@@ -714,7 +736,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         datetime.fromtimestamp(
                             Path(dest_event.pathname).stat().st_mtime
                         )
-                        .astimezone(dateutil.tz.tzutc())
+                        .astimezone(tzutc())
                         .timestamp(),
                     )
                     src_file.rename(dest_event.name)
@@ -722,7 +744,7 @@ class EventHandler(pyinotify.ProcessEvent):
                     version_info["file_path"] = dest_event.pathname
                     version_info["etag"] = file_obj["etag"]
                     r_c.set(
-                        redis_path_for_object_id_key(dest_event.pathname),
+                        redis_path_for_object_id_key(Path(dest_event.pathname)),
                         src_file.object_id,
                     )
                     r_c.delete(
@@ -755,7 +777,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         r_c.set(
                             local_or_box_file_m_time_key_func(path_builder, True),
                             parse(folder_entry.modified_at)
-                            .astimezone(dateutil.tz.tzutc())
+                            .astimezone(tzutc())
                             .timestamp(),
                         )
 
@@ -765,9 +787,9 @@ class EventHandler(pyinotify.ProcessEvent):
                         dest_event.pathname
                     )  # should check box instead
                     cur_offset = 0
-                    cur_box_folder_items: list[
-                        Union[File, Folder]
-                    ] = cur_box_folder.get_items(offset=cur_offset, limit=limit)
+                    cur_box_folder_items = list(
+                        cur_box_folder.get_items(offset=cur_offset, limit=limit)
+                    )
                     for cur_entry in cur_box_folder_items:
                         matching_name = cur_entry["name"] == os.path.basename(
                             dest_event.pathname
@@ -786,9 +808,12 @@ class EventHandler(pyinotify.ProcessEvent):
                                 datetime.fromtimestamp(
                                     Path(dest_event.pathname).stat().st_mtime
                                 )
-                                .astimezone(dateutil.tz.tzutc())
+                                .astimezone(tzutc())
                                 .timestamp(),
-                                partial(cur_entry.update_contents, dest_event.pathname),
+                                partial(
+                                    cast(File, cur_entry).update_contents,
+                                    dest_event.pathname,
+                                ),
                                 self.oauth,
                                 dest_event.pathname,
                             )
@@ -840,7 +865,7 @@ class EventHandler(pyinotify.ProcessEvent):
                                             complex_path_builder, True
                                         ),
                                         parse(complex_folder_entry.modified_at)
-                                        .astimezone(dateutil.tz.tzutc())
+                                        .astimezone(tzutc())
                                         .timestamp(),
                                     )
                                     r_c.set(
@@ -856,7 +881,7 @@ class EventHandler(pyinotify.ProcessEvent):
                             datetime.fromtimestamp(
                                 Path(dest_event.pathname).stat().st_mtime
                             )
-                            .astimezone(dateutil.tz.tzutc())
+                            .astimezone(tzutc())
                             .timestamp(),
                             partial(complex_move),
                             self.oauth,
@@ -884,7 +909,7 @@ class EventHandler(pyinotify.ProcessEvent):
                         Path(src_event.name).stem == dest_event.name
                         or (
                             Path(src_event.name).suffix == ".tmp"
-                            and Path(dest_event.name).suffix != ".tmp"
+                            and Path(cast(str, dest_event.name)).suffix != ".tmp"
                         )
                     )
                     and src_event.name != dest_event.name
@@ -915,9 +940,12 @@ class EventHandler(pyinotify.ProcessEvent):
                                 datetime.fromtimestamp(
                                     Path(dest_event.pathname).stat().st_mtime
                                 )
-                                .astimezone(dateutil.tz.tzutc())
+                                .astimezone(tzutc())
                                 .timestamp(),
-                                partial(cur_entry.update_contents, dest_event.pathname),
+                                partial(
+                                    cast(File, cur_entry).update_contents,
+                                    dest_event.pathname,
+                                ),
                                 self.oauth,
                                 dest_event.pathname,
                             )
@@ -952,7 +980,7 @@ class EventHandler(pyinotify.ProcessEvent):
                     last_modified_time = Path(dest_event.pathname).stat().st_mtime
                     queue_item = UploadQueueItemReal(
                         datetime.fromtimestamp(last_modified_time)
-                        .astimezone(dateutil.tz.tzutc())
+                        .astimezone(tzutc())
                         .timestamp(),
                         partial(
                             cur_box_folder.upload,
@@ -979,22 +1007,20 @@ class EventHandler(pyinotify.ProcessEvent):
                     )
                     # wm.add_watch(dest_event.pathname, rec=True, mask=mask, auto_add=True)
 
-    def process_delete_event(self, event: pyinotify.Event):
+    def process_delete_event(self, event: Event):
         crate_logger.debug(f"Doing a delete on {event=}")
         folders_to_traverse = self.folders_to_traverse(event.path)
         client = Client(self.oauth)
-        failed = False
         box_folder = None
         loop_index = 0
-        while not failed:
+        while not box_folder:
             try:
                 box_folder = client.folder(folder_id="0").get()
             except Exception:
                 crate_logger.warning("Error getting box root folder.", exc_info=True)
                 time.sleep(min([pow(2, loop_index), 8]))
                 loop_index += 1
-            else:
-                failed = True
+
         cur_box_folder = box_folder
         # if we're modifying in root box dir, then we've already found the folder
         try:
@@ -1047,7 +1073,7 @@ class EventHandler(pyinotify.ProcessEvent):
                 break
 
     # noinspection PyPep8Naming
-    def process_IN_CREATE(self, event: pyinotify.Event):
+    def process_IN_CREATE(self, event: Event):
         """
         Overrides the super.
         :param event:
@@ -1059,7 +1085,7 @@ class EventHandler(pyinotify.ProcessEvent):
             self.incoming_operations.put([event, "create"])
 
     # noinspection PyPep8Naming
-    def process_IN_DELETE(self, event: pyinotify.Event):
+    def process_IN_DELETE(self, event: Event):
         """
         Overrides the super.
         :param event:
@@ -1069,7 +1095,7 @@ class EventHandler(pyinotify.ProcessEvent):
         self.incoming_operations.put([event, "delete"])
 
     # noinspection PyPep8Naming
-    def process_IN_MODIFY(self, event: pyinotify.Event):
+    def process_IN_MODIFY(self, event: Event):
         """
         Overrides the super.
         :param event:
@@ -1081,7 +1107,7 @@ class EventHandler(pyinotify.ProcessEvent):
             self.incoming_operations.put([event, "modify"])
 
     # noinspection PyPep8Naming
-    def process_IN_MOVED_FROM(self, event: pyinotify.Event):
+    def process_IN_MOVED_FROM(self, event: Event):
         """
         Overrides the super.
         :param event:
@@ -1095,7 +1121,7 @@ class EventHandler(pyinotify.ProcessEvent):
             self.move_events.append(event)
 
     # noinspection PyPep8Naming
-    def process_IN_MOVED_TO(self, event: pyinotify.Event):
+    def process_IN_MOVED_TO(self, event: Event):
         """
         Overrides the super.
         :param event:
@@ -1139,15 +1165,15 @@ class EventHandler(pyinotify.ProcessEvent):
             crate_logger.debug("Moved to: {}".format(event.pathname))
 
     # noinspection PyPep8Naming,PyMethodMayBeStatic
-    def process_IN_DELETE_SELF(self, event: pyinotify.Event):
+    def process_IN_DELETE_SELF(self, event: Event):
         crate_logger.debug(event)
 
     # noinspection PyPep8Naming,PyMethodMayBeStatic
-    def process_ALL_EVENTS(self, event: pyinotify.Event):
+    def process_ALL_EVENTS(self, event: Event):
         crate_logger.debug(event)
 
     # noinspection PyPep8Naming
-    def process_IN_CLOSE(self, event: pyinotify.Event):
+    def process_IN_CLOSE(self, event: Event):
         """
         Overrides the super.
         :param event:
@@ -1217,7 +1243,7 @@ def get_box_folder(
 
 
 def path_time_recurse_func(
-    cur_path: Union[str, Path], inotify_wm: pyinotify.WatchManager = None
+    cur_path: Union[str, Path], inotify_wm: Optional[pyinotify.WatchManager] = None
 ) -> Dict[str, float]:
     cur_data_map = {
         Path(cur_path)
@@ -1234,7 +1260,7 @@ def path_time_recurse_func(
         if sub_cur_path.is_file():
             cur_data_map[sub_cur_path.resolve().as_posix()] = (
                 datetime.fromtimestamp(sub_cur_path.stat().st_mtime)
-                .astimezone(dateutil.tz.tzutc())
+                .astimezone(tzutc())
                 .timestamp()
             )
         else:
