@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "diycrate"
-version = "0.2.11.4a3"
+version = "0.2.11.4a4"
 authors=[{"email" = "jasonsheld@gmail.com", "name"= "Jason Held"}]
 dynamic = ['readme']
 requires-python=">=3.6,<4"
