@@ -12,14 +12,16 @@ from typing import Any, Callable, List, Mapping, NamedTuple, Union, cast
 
 import boxsdk.exception
 from boxsdk import OAuth2
+from boxsdk.client import Client
+from boxsdk.object.file import File
+from boxsdk.object.folder import Folder
+from boxsdk.object.user import User
 from boxsdk.exception import BoxAPIException
 from boxsdk.object.event import Event
 from dateutil.parser import parse
 from dateutil.tz import tzutc
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
-
-from diycrate.utils import Client, File, Folder, User
 
 from .cache_utils import (
     local_or_box_file_m_time_key_func,
@@ -158,7 +160,7 @@ def perform_upload(
                         )
                 if isinstance(post_ret_callable, partial):
                     post_ret_callable()
-                user_resource = client.user()
+                user_resource = cast(User, client.user())
                 user: User = user_resource.get(fields=["space_used", "space_amount"])
                 if user.space_used / user.space_amount > 0.9:
                     crate_logger.debug(

@@ -11,10 +11,15 @@ from functools import partial
 from pathlib import Path
 from typing import Iterable, Optional, TypedDict, Union, List, Dict, cast
 import typing
+from boxsdk import Client, OAuth2
 
 
 import boxsdk.object.file
+from boxsdk.object.file import File
+from boxsdk.object.folder import Folder
+from boxsdk.object.item import Item
 import pyinotify
+
 from boxsdk.exception import BoxAPIException
 from boxsdk.util.chunked_uploader import ChunkedUploader
 from dateutil import tz
@@ -23,7 +28,7 @@ from dateutil.parser import parse
 from requests.exceptions import ConnectionError
 from urllib3.exceptions import ProtocolError
 
-from diycrate.utils import FastAPI, Client, File, Folder, Item
+from diycrate.utils import FastAPI
 
 from .cache_utils import (
     redis_key,
@@ -78,6 +83,9 @@ class EventHandler(pyinotify.ProcessEvent):
     EventHandler to manage cloud storage synchronization.
     """
 
+    oauth: OAuth2
+    wait_time: int
+
     # noinspection SpellCheckingInspection
     def my_init(self, **kargs):
         """
@@ -95,12 +103,13 @@ class EventHandler(pyinotify.ProcessEvent):
         self.folders_from_box = []
         self.incoming_operations = queue.Queue()
         self.operations = []
-        self.wait_time = kargs.get("wait_time", 1)
-        self.oauth = kargs.get("oauth")
+        setattr(self, "wait_time", kargs.get("wait_time", 1))
+        setattr(self, "oauth", kargs.get("oauth"))
         self.operations_thread = threading.Thread(
             target=self.incoming_operation_coalesce
         )
-        self.app = kargs.get("app")
+
+        self.app: Optional[FastAPI] = kargs.get("app")
         self.operations_thread.daemon = True
         self.operations_thread.start()
 
@@ -541,11 +550,11 @@ class EventHandler(pyinotify.ProcessEvent):
         loop_index = 0
         while not box_folder:
             try:
-                box_folder = typing.cast(Folder, client.folder(folder_id="0").get())  # type: ignore
+                box_folder = client.folder(folder_id="0").get()
             except BoxAPIException as e:
                 crate_logger.warning("Error getting box root folder.", exc_info=e)
                 get_access_token(client.auth.access_token, app=self.app)
-                client._auth = self.app.oauth
+                client = Client(cast(FastAPI, self.app).oauth)
                 time.sleep(min([pow(2, loop_index), 8]))
                 loop_index += 1
             except Exception:
@@ -1214,7 +1223,7 @@ def get_box_folder(
         except BoxAPIException as e:
             get_access_token(client.auth._access_token, app=app)
             if app:
-                client._auth = app.oauth
+                client._auth = app.oauth  # type: ignore
             if i == retry_limit - 1:
                 crate_logger.info("Bad box api response.", exc_info=e)
                 raise e

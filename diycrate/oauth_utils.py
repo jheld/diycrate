@@ -1,4 +1,5 @@
 import threading
+from time import sleep
 import typing
 import webbrowser
 from configparser import ConfigParser
@@ -102,19 +103,34 @@ def get_access_token(
                         access_token_resolved, app.oauth._refresh_token
                     )
                     return access_token_resolved
-
-    post_data = {"refresh_token": refresh_token, "access_token": access_token}
-    post_kwargs = {
-        (
-            "json" if bool(int(conf_obj["box"]["auth_data_as_json"])) else "data"
-        ): post_data
+    access_token_to_send = typing.cast(typing.Optional[str], access_token)
+    post_data: dict[str, None | str] = {
+        "refresh_token": refresh_token,
+        "access_token": access_token_to_send,
     }
-    response = httpx.post(
-        remote_url,
-        verify=True,
-        timeout=10.0,
-        **post_kwargs,
-    )
+    auth_data_as_json = bool(int(conf_obj["box"]["auth_data_as_json"]))
+    num_retries = 5
+    retry_count = 0
+    response: httpx.Response | None = None
+    while retry_count < num_retries:
+        try:
+            if auth_data_as_json:
+                response = httpx.post(
+                    remote_url, verify=True, timeout=10.0, json=post_data
+                )
+            else:
+                response = httpx.post(
+                    remote_url, verify=True, timeout=10.0, data=post_data
+                )
+            break
+        except httpx.ReadTimeout:
+            retry_count += 1
+            if retry_count < num_retries:
+                sleep(min([8, pow(2, retry_count)]))
+            else:
+                raise
+    if response is None:
+        raise Exception("Response is somehow none, bailing out.")
     try:
         response.raise_for_status()
         response_json: List[str] = response.json()
@@ -337,10 +353,11 @@ def oauth_dance(
 
     app.oauth = setup_remote_oauth(redis_client, conf=conf, app=app)
     if file_event_handler:
-        file_event_handler.oauth = app.oauth
+        file_event_handler.oauth = app.oauth  # type: ignore
     redirect_url_domain = "127.0.0.1"
+    conf_cast = typing.cast(typing.Union[ConfigParser, dict], conf)
     (auth_url, csrf_token) = app.oauth.get_authorization_url(
-        redirect_url=f"https://{redirect_url_domain}:{conf['box']['web_server_port']}/"
+        redirect_url=f"https://{redirect_url_domain}:{conf_cast['box']['web_server_port']}/"
     )
     app.csrf_token = csrf_token
     if web_server_thread and not web_server_thread.is_alive():
